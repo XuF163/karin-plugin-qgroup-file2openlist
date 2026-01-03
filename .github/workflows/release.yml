@@ -2,56 +2,78 @@ name: Release and Publish
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. v0.0.1). Leave empty when triggered by tag push."
+        required: false
+        default: ""
 
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
+  id-token: write
 
 jobs:
-  release-please:
+  publish:
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     steps:
-      - name: Release Please
-        uses: google-github-actions/release-please-action@v3
-        id: release
-        with:
-          release-type: node
-          target-branch: main
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            if [[ -z "${{ inputs.tag }}" ]]; then
+              echo "Missing input 'tag' for workflow_dispatch" >&2
+              exit 1
+            fi
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.release_created }}
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-        if: ${{ steps.release.outputs.release_created }}
+          cache: pnpm
+
+      - run: corepack enable
 
       - name: Install
-        run: npm install
-        if: ${{ steps.release.outputs.release_created }}
+        run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: npm run build
-        if: ${{ steps.release.outputs.release_created }}
+        run: pnpm run build
+
+      - name: Verify tag matches package.json version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          node -e "const pkg=require('./package.json'); const tag=(process.env.RELEASE_TAG||'').replace(/^v/,''); if(!tag){console.error('Missing RELEASE_TAG'); process.exit(1)}; if(pkg.version!==tag){console.error(`package.json version ${pkg.version} != tag ${tag}`); process.exit(1)}; console.log('Version OK:', pkg.version);"
 
       - name: Verify npm auth
         run: npm whoami
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: ${{ steps.release.outputs.release_created }}
 
-      - name: Remove devDependencies
-        run: npm pkg delete devDependencies
-        if: ${{ steps.release.outputs.release_created }}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
 
       - name: Publish to npm
-        run: npm run pub
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: ${{ steps.release.outputs.release_created }}
