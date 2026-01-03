@@ -1,45 +1,93 @@
-name: Release and Publish # 发布和发布的工作流程名称
+name: Release and Publish
+
 on:
   push:
-    branches:
-      - main # 仅当推送到 main 分支时触发
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. v0.0.1). Leave empty when triggered by tag push."
+        required: false
+        default: ""
+
 permissions:
-  contents: write # 设置内容的权限为写
-  pull-requests: write # 设置拉取请求的权限为写
-  issues: write # 设置问题的权限为写
+  contents: write
+  id-token: write
+
 jobs:
-  release-please:
-    # 设置工作流程运行环境为 Ubuntu
+  publish:
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     steps:
-      # 使用 release-please-action@v3 动作
-      - uses: google-github-actions/release-please-action@v3
-        id: release
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            if [[ -z "${{ inputs.tag }}" ]]; then
+              echo "Missing input 'tag' for workflow_dispatch" >&2
+              exit 1
+            fi
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          # 设置发布类型为 Node.js
-          release-type: node
-      # 检出代码
-      - uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.release_created }}
-      # 设置 Node.js 环境
-      - uses: actions/setup-node@v4
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          # 设置 Node.js 版本
+          version: 9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
           node-version: 20
-          # 设置 npm 注册表 URL
-          registry-url: https://registry.npmjs.org
-        if: ${{ steps.release.outputs.release_created }}
-      # 安装依赖
-      - run: npm install
-        if: ${{ steps.release.outputs.release_created }}
-      # 编译
-      - run: npm run build
-        if: ${{ steps.release.outputs.release_created }}
-      # 删除开发依赖
-      - run: npm pkg delete devDependencies
-        if: ${{ steps.release.outputs.release_created }}
-      # 发布带npm
-      - run: npm run pub
+          cache: pnpm
+
+      - name: Upgrade npm (trusted publishing)
+        run: npm i -g npm@^11.5.1
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Verify tag matches package.json version
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: ${{ steps.release.outputs.release_created }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json')
+          const tag = (process.env.RELEASE_TAG || '').replace(/^v/, '')
+
+          if (!tag) {
+            console.error('Missing RELEASE_TAG')
+            process.exit(1)
+          }
+
+          if (pkg.version !== tag) {
+            console.error(`package.json version ${pkg.version} != tag ${tag}`)
+            process.exit(1)
+          }
+
+          console.log('Version OK:', pkg.version)
+          NODE
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
