@@ -4,13 +4,13 @@
   "author": "429",
   "type": "module",
   "description": "karin plugin for QGroupFile backup",
-  "homepage": "",
+  "homepage": "https://github.com/XuF163/karin-plugin-qgroup-file2openlist",
   "bugs": {
-    "url": "https://github.com/XuF163/karin-plugin-qgroup-file2openlist"
+    "url": "https://github.com/XuF163/karin-plugin-qgroup-file2openlist/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XuF163/karin-plugin-qgroup-file2openlist"
+    "url": "git+https://github.com/XuF163/karin-plugin-qgroup-file2openlist.git"
   },
   "scripts": {
     "app": "node lib/app.js",
