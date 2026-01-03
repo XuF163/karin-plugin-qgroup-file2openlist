@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{name}} 帮助</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #0f0f0f;
+      --muted: #666666;
+      --line: #0f0f0f;
+      --soft: #f3f3f3;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 900px;
+      height: 720px;
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      position: relative;
+    }
+
+    .wrap {
+      padding: 40px 44px;
+    }
+
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 3px solid var(--line);
+    }
+
+    .title {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      line-height: 1.1;
+    }
+
+    .meta {
+      text-align: right;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .section {
+      margin-top: 22px;
+      padding: 18px;
+      background: var(--soft);
+      border: 2px solid var(--line);
+    }
+
+    .section-title {
+      font-weight: 800;
+      font-size: 14px;
+      margin: 0 0 12px 0;
+    }
+
+    .cmd {
+      display: flex;
+      gap: 14px;
+      padding: 10px 0;
+      border-top: 1px solid rgba(15, 15, 15, 0.15);
+    }
+
+    .cmd:first-of-type {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .cmd-key {
+      width: 190px;
+      flex: 0 0 auto;
+      font-weight: 800;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .cmd-desc {
+      flex: 1 1 auto;
+      color: #1c1c1c;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .tips {
+      margin-top: 16px;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .tips li {
+      display: flex;
+      gap: 10px;
+      padding: 6px 0;
+      border-top: 1px dashed rgba(15, 15, 15, 0.25);
+    }
+
+    .tips li:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border: 2px solid var(--line);
+      margin-top: 4px;
+      flex: 0 0 auto;
+    }
+
+    .footer {
+      position: absolute;
+      left: 44px;
+      right: 44px;
+      bottom: 26px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border: 1px solid rgba(15, 15, 15, 0.35);
+      background: #fff;
+      color: #111;
+      border-radius: 999px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="title">群文件同步 · 帮助</div>
+        <div class="meta">插件：<span class="mono">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
+      </div>
+      <div class="meta">
+        <div>黑白模式 · 简洁指令卡</div>
+        <div>{{generatedAt}}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">常用命令</div>
+
+      <div class="cmd">
+        <div class="cmd-key mono">#同步群文件</div>
+        <div class="cmd-desc">把群文件同步到 OpenList（默认增量）。群内建议管理员/群主使用。</div>
+      </div>
+      <div class="cmd">
+        <div class="cmd-key mono">#导出群文件</div>
+        <div class="cmd-desc">导出群文件列表（可用于排查缺失/重复）。</div>
+      </div>
+      <div class="cmd">
+        <div class="cmd-key mono">#群同步配置</div>
+        <div class="cmd-desc">查看/设置当前群的同步目标目录、模式等参数。</div>
+      </div>
+      <div class="cmd">
+        <div class="cmd-key mono">#群文件帮助</div>
+        <div class="cmd-desc">发送本帮助图片。</div>
+      </div>
+
+      <ul class="tips">
+        <li><span class="dot"></span><span>试试：<span class="mono">#同步群文件 --help</span> 查看参数说明。</span></li>
+        <li><span class="dot"></span><span>全量同步：<span class="mono">#同步群文件 --mode=full</span>（文件多时更慢）。</span></li>
+        <li><span class="dot"></span><span>自定义目标目录：<span class="mono">#同步群文件 --to=/qq/群号</span></span></li>
+        <li><span class="dot"></span><span>只想先验证连通性：先少量同步或先跑导出。</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>提示：此图由前端模板渲染生成</div>
+    <div class="mono">#群文件帮助</div>
+  </div>
+</body>
+
+</html>
