@@ -1,0 +1,56 @@
+name: Publish Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. v0.0.1)"
+        required: true
+        default: "v0.0.1"
+      create_github_release:
+        description: "Create GitHub Release for this tag"
+        required: true
+        default: "true"
+      publish_to_npm:
+        description: "Publish package to npm"
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Remove devDependencies
+        run: npm pkg delete devDependencies
+
+      - name: Create GitHub Release
+        if: ${{ inputs.create_github_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+
+      - name: Publish to npm
+        if: ${{ inputs.publish_to_npm == 'true' }}
+        run: npm run pub
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
