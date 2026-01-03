@@ -1,5 +1,6 @@
 import { dir } from '@/dir'
 import { config } from '@/utils'
+import { ensurePluginResources } from '@/utils/resources'
 import { karin, render, segment, logger } from 'node-karin'
 
 /**
@@ -8,6 +9,7 @@ import { karin, render, segment, logger } from 'node-karin'
  */
 export const image = karin.command(/^#?测试渲染$/, async (e) => {
   try {
+    await ensurePluginResources()
     const html = dir.defResourcesDir + '/template/test.html'
     const image = dir.defResourcesDir + '/image/启程宣发.png'
 
@@ -54,6 +56,7 @@ export const image = karin.command(/^#?测试渲染$/, async (e) => {
 export const renderUrl = karin.command(/^#?渲染/, async (e) => {
   const file = e.msg.replace(/^#?渲染/, '').trim()
   try {
+    await ensurePluginResources()
     const img = await render.render({
       name: 'render',
       encoding: 'base64',

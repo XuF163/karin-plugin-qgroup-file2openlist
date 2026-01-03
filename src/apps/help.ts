@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { dir } from '@/dir'
+import { ensurePluginResources } from '@/utils/resources'
 import { karin, logger, render, segment } from 'node-karin'
 
 const formatDateTime = (date: Date) => {
@@ -23,6 +24,7 @@ const formatDateTime = (date: Date) => {
  */
 export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮助|openlist帮助)$/i, async (e) => {
   try {
+    await ensurePluginResources()
     const html = path.join(dir.defResourcesDir, 'template', 'help.html')
 
     const img = await render.render({
@@ -58,4 +60,3 @@ export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮�
   name: '群文件帮助',
   permission: 'all',
 })
-
