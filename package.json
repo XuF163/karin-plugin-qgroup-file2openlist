@@ -6,11 +6,11 @@
   "description": "karin plugin for QGroupFile backup",
   "homepage": "",
   "bugs": {
-    "url": ""
+    "url": "https://github.com/XuF163/karin-plugin-qgroup-file2openlist"
   },
   "repository": {
     "type": "git",
-    "url": "git+"
+    "url": "git+https://github.com/XuF163/karin-plugin-qgroup-file2openlist"
   },
   "scripts": {
     "app": "node lib/app.js",
