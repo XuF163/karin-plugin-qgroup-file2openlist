@@ -23,10 +23,12 @@ export const ensurePluginResources = async () => {
 
     const files = getAllFilesSync(sourceDir, { returnType: 'rel' })
     for (const rel of files) {
+      const normalizedRel = rel.replaceAll('\\', '/')
+      const shouldOverwrite = normalizedRel.startsWith('template/')
       const sourcePath = path.join(sourceDir, rel)
       const targetPath = path.join(targetDir, rel)
 
-      if (fs.existsSync(targetPath)) continue
+      if (fs.existsSync(targetPath) && !shouldOverwrite) continue
 
       fs.mkdirSync(path.dirname(targetPath), { recursive: true })
       fs.copyFileSync(sourcePath, targetPath)
@@ -38,4 +40,3 @@ export const ensurePluginResources = async () => {
 
   return ensurePromise
 }
-
