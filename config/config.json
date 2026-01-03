@@ -1,0 +1,20 @@
+{
+  "yiyanApi": "https://api.yujn.cn/api/sjyy.php",
+  "openlistBaseUrl": "http://127.0.0.1:5244",
+  "openlistUsername": "",
+  "openlistPassword": "",
+  "openlistTargetDir": "/",
+  "groupSyncDefaults": {
+    "mode": "incremental",
+    "flat": false,
+    "urlConcurrency": 3,
+    "transferConcurrency": 3,
+    "fileTimeoutSec": 600,
+    "retryTimes": 2,
+    "retryDelayMs": 1500,
+    "progressReportEvery": 10,
+    "downloadLimitKbps": 0,
+    "uploadLimitKbps": 0
+  },
+  "groupSyncTargets": []
+}
