@@ -62,11 +62,6 @@ jobs:
         run: |
           node -e "const pkg=require('./package.json'); const tag=(process.env.RELEASE_TAG||'').replace(/^v/,''); if(!tag){console.error('Missing RELEASE_TAG'); process.exit(1)}; if(pkg.version!==tag){console.error(`package.json version ${pkg.version} != tag ${tag}`); process.exit(1)}; console.log('Version OK:', pkg.version);"
 
-      - name: Verify npm auth
-        run: npm whoami
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -75,5 +70,3 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
