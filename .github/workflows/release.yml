@@ -40,6 +40,12 @@ jobs:
         run: npm run build
         if: ${{ steps.release.outputs.release_created }}
 
+      - name: Verify npm auth
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: ${{ steps.release.outputs.release_created }}
+
       - name: Remove devDependencies
         run: npm pkg delete devDependencies
         if: ${{ steps.release.outputs.release_created }}
