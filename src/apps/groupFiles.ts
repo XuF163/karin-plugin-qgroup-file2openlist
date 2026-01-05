@@ -859,10 +859,7 @@ const helpText = [
 ].join('\n')
 
 export const exportGroupFiles = karin.command(/^#?(导出群文件|群文件导出)(.*)$/i, async (e) => {
-  if (!e.isPrivate) {
-    await e.reply('请私聊使用该命令，并在参数中指定群号\n例如：#导出群文件 123456')
-    return true
-  }
+  if (!e.isPrivate) return false
 
   const argsText = e.msg.replace(/^#?(导出群文件|群文件导出)/i, '')
   const { groupId, format, withUrl, urlOnly, sendFile, folderId, maxFiles, concurrency, help } = parseArgs(argsText)
@@ -1301,6 +1298,8 @@ export const syncGroupFilesToOpenListCore = async (params: {
 }
 
 export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群文件同步)(.*)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
   const argsText = e.msg.replace(/^#?(同步群文件|群文件同步)/i, '')
   const {
     groupId: parsedGroupId,
@@ -1327,14 +1326,6 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
   if (!groupId) {
     await e.reply(`缺少群号参数\n\n${syncHelpText}`)
     return true
-  }
-
-  if (e.isGroup) {
-    const role = (e.sender as any)?.role
-    if (role !== 'owner' && role !== 'admin') {
-      await e.reply('请群管理员使用该命令（或在私聊中操作）。')
-      return true
-    }
   }
 
   const defaults = cfg.groupSyncDefaults ?? {}

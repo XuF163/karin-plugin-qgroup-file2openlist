@@ -153,6 +153,8 @@ const cfgHelp = [
 ].join('\n')
 
 export const groupSyncConfig = karin.command(/^#?(群同步配置|同步群配置|群文件同步配置)(.*)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
   const raw = e.msg.replace(/^#?(群同步配置|同步群配置|群文件同步配置)/i, '').trim()
   if (!raw || /^(help|帮助|\?)$/i.test(raw)) {
     await e.reply(cfgHelp)

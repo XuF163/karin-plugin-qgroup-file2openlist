@@ -3,6 +3,8 @@ import { karin, segment, common } from 'node-karin'
 
 /** 一言api */
 export const yiyanApi = karin.command(/^#一言$/, async (e) => {
+  if (!e.isPrivate) return false
+
   const { yiyanApi } = config()
   await e.reply(segment.image(yiyanApi))
 }, {
@@ -13,7 +15,9 @@ export const yiyanApi = karin.command(/^#一言$/, async (e) => {
  * 发送主动消息插件demo
  * 触发指令: #测试主动消息
  */
-export const sendMsg = karin.command(/^#测试主动消息$/, async (e) => {
+export const sendMsg = karin.command(/^#测试njkj bolj主动消息$/, async (e) => {
+  if (!e.isPrivate) return false
+
   /** Bot的id 哪个Bot发就填哪个的 */
   const selfId = e.selfId
 
@@ -55,6 +59,8 @@ export const sendMsg = karin.command(/^#测试主动消息$/, async (e) => {
  * 触发指令: #测试转发
  */
 export const forwardMessage = karin.command(/^#测试转发$/, async (e) => {
+  if (!e.isPrivate) return false
+
   /** 定义具体的转发消息 */
   const message = [
     segment.text('🌟 这是转发的第一条消息 🌟'),
@@ -89,6 +95,8 @@ export const forwardMessage = karin.command(/^#测试转发$/, async (e) => {
  * 触发指令: #随机表情
  */
 export const randomEmoji = karin.command(/^#随机表情$/, async (e) => {
+  if (!e.isPrivate) return false
+
   /** 表情包URL数组 */
   const emojiUrls = [
     'https://i.imgur.com/XaUdU2C.gif',
@@ -123,6 +131,8 @@ export const randomEmoji = karin.command(/^#随机表情$/, async (e) => {
  * 触发指令: #每日一言
  */
 export const dailyQuote = karin.command(/^#每日一言$/, async (e) => {
+  if (!e.isPrivate) return false
+
   /** 每日一言数组 */
   const quotes = [
     '今天也是充满希望的一天！加油！✨',
@@ -158,6 +168,8 @@ export const dailyQuote = karin.command(/^#每日一言$/, async (e) => {
  * 触发指令: #今日天气
  */
 export const weatherForecast = karin.command(/^#今日天气$/, async (e) => {
+  if (!e.isPrivate) return false
+
   /** 模拟天气数据 */
   const weathers = [
     '☀️ 晴天，温度25°C，适合出门玩耍~',

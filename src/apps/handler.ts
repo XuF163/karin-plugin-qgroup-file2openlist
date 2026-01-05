@@ -7,6 +7,8 @@ export const test = karin.handler('test.image', (args, reject) => {
 })
 
 export const testHandler = karin.command(/^#?测试handler$/, async (e) => {
+  if (!e.isPrivate) return false
+
   const msg = '测试handler'
   /** 对于传参，开发者传自行需要的参数即可，无任何参数强制需求... */
   const res = await handler.call('test.image', { e, msg })

@@ -7,7 +7,9 @@ import { karin, render, segment, logger } from 'node-karin'
  * 渲染demo
  * 触发指令: #测试渲染
  */
-export const image = karin.command(/^#?测试渲染$/, async (e) => {
+export const image = karin.command(/^#?测试oniubhjk渲染$/, async (e) => {
+  if (!e.isPrivate) return false
+
   try {
     await ensurePluginResources()
     const html = dir.defResourcesDir + '/template/test.html'
@@ -54,6 +56,8 @@ export const image = karin.command(/^#?测试渲染$/, async (e) => {
  * 触发指令: #渲染
  */
 export const renderUrl = karin.command(/^#?渲染/, async (e) => {
+  if (!e.isPrivate) return false
+
   const file = e.msg.replace(/^#?渲染/, '').trim()
   try {
     await ensurePluginResources()
@@ -96,6 +100,8 @@ export const renderUrl = karin.command(/^#?渲染/, async (e) => {
  * 网页截图
  */
 export const screenshot = karin.command('^#测试截图$', async (e) => {
+  if (!e.isPrivate) return false
+
   const { screenshotUrl } = config()
   const img = await karin.render(screenshotUrl)
   await e.reply(segment.image(`base64://${img}`))

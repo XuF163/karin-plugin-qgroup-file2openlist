@@ -23,6 +23,8 @@ const formatDateTime = (date: Date) => {
  * 触发指令：#群文件帮助
  */
 export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮助|openlist帮助)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
   try {
     await ensurePluginResources()
     const html = path.join(dir.defResourcesDir, 'template', 'help.html')
