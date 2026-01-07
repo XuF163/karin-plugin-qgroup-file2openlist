@@ -121,7 +121,7 @@ export default defineConfig<WebConfigData>({
     const targets = Array.isArray(cfg.groupSyncTargets) ? cfg.groupSyncTargets : []
     const targetsData = targets.map((t: any) => {
       const groupId = asString(t?.groupId ?? '').trim()
-      const title = groupId ? `群 ${groupId}` : '目标群'
+      const title = groupId ? `群 ${groupId}` : '新群'
 
       const enabled = Boolean(t?.enabled ?? true)
       const sourceFolderId = asString(t?.sourceFolderId ?? '')
@@ -142,9 +142,20 @@ export default defineConfig<WebConfigData>({
       const scheduleCron = asString(t?.schedule?.cron ?? '')
       const uploadBackup = Boolean(t?.uploadBackup ?? false)
 
+      const subtitle = (() => {
+        if (!groupId) return '请先填写群号（群号为空不会保存）'
+        const tags: string[] = []
+        tags.push(enabled ? '启用' : '禁用')
+        tags.push(mode === 'incremental' ? '增量' : '全量')
+        if (uploadBackup) tags.push('上传备份')
+        if (scheduleEnabled) tags.push('定时')
+        if (flat) tags.push('平铺')
+        return tags.join(' · ') || '—'
+      })()
+
       return {
         title,
-        subtitle: '\u200b',
+        subtitle,
         gst_groupId: groupId,
         gst_enabled: enabled ? 'true' : 'false',
         gst_uploadBackup: uploadBackup ? 'true' : 'false',
@@ -165,6 +176,30 @@ export default defineConfig<WebConfigData>({
         gst_scheduleEnabled: scheduleEnabled ? 'true' : 'false',
         gst_scheduleCron: scheduleCron,
       }
+    })
+
+    targetsData.push({
+      title: '新群',
+      subtitle: '填写群号后保存（无需点“添加新卡片”）',
+      gst_groupId: '',
+      gst_enabled: 'true',
+      gst_uploadBackup: 'false',
+      gst_sourceFolderId: '',
+      gst_targetDir: '',
+      gst_mode: pickMode(defaults?.mode, 'incremental'),
+      gst_flat: String(Boolean(defaults?.flat ?? false)),
+      gst_maxFiles: '',
+      gst_urlConcurrency: '',
+      gst_transferConcurrency: '',
+      gst_fileTimeoutSec: '',
+      gst_retryTimes: '',
+      gst_retryDelayMs: '',
+      gst_progressReportEvery: '',
+      gst_downloadLimitKbps: '',
+      gst_uploadLimitKbps: '',
+      gst_timeWindows: '',
+      gst_scheduleEnabled: 'false',
+      gst_scheduleCron: '',
     })
 
     const compactInput = {
@@ -216,7 +251,7 @@ export default defineConfig<WebConfigData>({
         fullWidth: true,
         children: [
           components.accordionItem.create('openlist', {
-            title: 'Target OpenList',
+            title: 'OpenList（目标端）',
             subtitle: '\u200b',
             isCompact: true,
             className: grid2,
@@ -347,193 +382,20 @@ export default defineConfig<WebConfigData>({
               }),
             ],
           }),
-          ...(false ? [components.accordionItem.create('targets', {
-            title: '同步对象群配置',
-            subtitle: '\u200b',
-            isCompact: true,
-            children: [
-              components.accordionPro.create('groupSyncTargets', targetsData, {
-                title: '同步对象群',
-                variant: 'bordered',
-                selectionMode: 'single',
-                isCompact: true,
-                showDivider: true,
-                fullWidth: true,
-                children: {
-                  title: '目标群',
-                  subtitle: '\u200b',
-                  isCompact: true,
-                  className: grid2,
-                  children: [
-                    components.input.string('gst_groupId', {
-                      ...compactInput,
-                      className: `sm:col-span-2 ${compactInput.className}`,
-                      label: '群号',
-                      placeholder: '123456',
-                      isClearable: true,
-                    }),
-                    components.select.create('gst_enabled', {
-                      ...compactSelect,
-                      label: '启用自动同步',
-                      defaultValue: 'true',
-                      items: [
-                        components.select.createItem('true', { value: 'true', label: '启用' }),
-                        components.select.createItem('false', { value: 'false', label: '禁用' }),
-                      ],
-                    }),
-                    components.select.create('gst_uploadBackup', {
-                      ...compactSelect,
-                      label: '群文件上传自动备份',
-                      description: '监听该群文件上传事件并自动备份到 OpenList（需在该群启用）',
-                      defaultValue: 'false',
-                      items: [
-                        components.select.createItem('false', { value: 'false', label: '关闭' }),
-                        components.select.createItem('true', { value: 'true', label: '开启' }),
-                      ],
-                    }),
-                    components.select.create('gst_mode', {
-                      ...compactSelect,
-                      label: '同步模式',
-                      defaultValue: pickMode(defaults?.mode, 'incremental'),
-                      items: [
-                        components.select.createItem('incremental', { value: 'incremental', label: '增量' }),
-                        components.select.createItem('full', { value: 'full', label: '全量' }),
-                      ],
-                    }),
-                    components.input.string('gst_targetDir', {
-                      ...compactInput,
-                      className: `sm:col-span-2 ${compactInput.className}`,
-                      label: '目标目录（可选）',
-                      description: '为空则使用 openlistTargetDir/<群号>',
-                      placeholder: '/挂载目录/QQ群文件/123456',
-                      isClearable: true,
-                    }),
-                    components.input.string('gst_sourceFolderId', {
-                      ...compactInput,
-                      className: `sm:col-span-2 ${compactInput.className}`,
-                      label: '起始文件夹ID（可选）',
-                      description: '从群文件的指定文件夹开始导出/同步',
-                      isClearable: true,
-                    }),
-                    components.select.create('gst_flat', {
-                      ...compactSelect,
-                      label: '平铺上传',
-                      defaultValue: String(Boolean(defaults?.flat ?? false)),
-                      items: [
-                        components.select.createItem('false', { value: 'false', label: '保留结构' }),
-                        components.select.createItem('true', { value: 'true', label: '平铺' }),
-                      ],
-                    }),
-                    components.input.number('gst_maxFiles', {
-                      ...compactNumber,
-                      label: '最多同步文件数（0=不限制）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 1000000, error: '范围 0-1000000' }],
-                    }),
-                    components.input.number('gst_urlConcurrency', {
-                      ...compactNumber,
-                      label: '解析URL并发（可选）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 5, error: '范围 0-5' }],
-                    }),
-                    components.input.number('gst_transferConcurrency', {
-                      ...compactNumber,
-                      label: '下载/上传并发（可选）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 5, error: '范围 0-5' }],
-                    }),
-                    components.input.number('gst_fileTimeoutSec', {
-                      ...compactNumber,
-                      label: '单文件超时（秒，可选）',
-                      description: `最大 ${MAX_FILE_TIMEOUT_SEC}s`,
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: MAX_FILE_TIMEOUT_SEC, error: `范围 0-${MAX_FILE_TIMEOUT_SEC}` }],
-                    }),
-                    components.input.number('gst_retryTimes', {
-                      ...compactNumber,
-                      label: '重试次数（可选）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 1000, error: '范围 0-1000' }],
-                    }),
-                    components.input.number('gst_retryDelayMs', {
-                      ...compactNumber,
-                      label: '重试延迟（ms，可选）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 3600000, error: '范围 0-3600000' }],
-                    }),
-                    components.input.number('gst_progressReportEvery', {
-                      ...compactNumber,
-                      label: '进度消息间隔（每N个文件，可选）',
-                      description: '0=关闭（仅影响聊天回执，不影响日志）',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 100000, error: '范围 0-100000' }],
-                    }),
-                    components.input.number('gst_downloadLimitKbps', {
-                      ...compactNumber,
-                      label: '下载限速（KB/s，可选）',
-                      description: '0=不限制；不配置限速时会自动调整并发（最大5）以尽量跑满带宽',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 10000000, error: '范围 0-10000000' }],
-                    }),
-                    components.input.number('gst_uploadLimitKbps', {
-                      ...compactNumber,
-                      label: '上传限速（KB/s，可选）',
-                      description: '0=不限制；不配置限速时会自动调整并发（最大5）以尽量跑满带宽',
-                      defaultValue: '',
-                      isClearable: true,
-                      rules: [{ min: 0, max: 10000000, error: '范围 0-10000000' }],
-                    }),
-                    components.input.string('gst_timeWindows', {
-                      ...compactInput,
-                      className: `sm:col-span-2 ${compactInput.className}`,
-                      label: '同步时段（定时任务）',
-                      description: '例：00:00-06:00,23:00-23:59；空=不限制',
-                      placeholder: '00:00-06:00,23:00-23:59',
-                      isClearable: true,
-                    }),
-                    components.select.create('gst_scheduleEnabled', {
-                      ...compactSelect,
-                      label: '启用定时同步',
-                      defaultValue: 'false',
-                      items: [
-                        components.select.createItem('false', { value: 'false', label: '关闭' }),
-                        components.select.createItem('true', { value: 'true', label: '开启' }),
-                      ],
-                    }),
-                    components.input.string('gst_scheduleCron', {
-                      ...compactInput,
-                      className: `sm:col-span-2 ${compactInput.className}`,
-                      label: '定时 Cron',
-                      description: '6段/5段均可，例如：0 */10 * * * *（每10分钟）',
-                      placeholder: '0 */10 * * * *',
-                      isClearable: true,
-                    }),
-                  ],
-                },
-              }),
-            ],
-          })] : []),
         ],
       }),
       components.accordionPro.create('groupSyncTargets', targetsData, {
         className: 'mt-2',
-        title: '同步对象群配置',
+        title: '自动同步目标群（折叠卡片列表）',
+        subtitle: '折叠卡片列表=“手风琴”；直接填最后一个“新群”卡片并保存（群号为空不会保存）。',
         variant: 'bordered',
         selectionMode: 'single',
         isCompact: true,
         showDivider: true,
         fullWidth: true,
         children: {
-          title: '目标群',
-          subtitle: '\u200b',
+          title: '新群',
+          subtitle: '填写群号后保存',
           isCompact: true,
           className: grid2,
           children: [
