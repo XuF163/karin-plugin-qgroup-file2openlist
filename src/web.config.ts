@@ -74,10 +74,6 @@ const unwrapAccordionValue = (value: unknown) => {
   return Object.prototype.hasOwnProperty.call(v, 'value') ? v.value : value
 }
 
-const apInput = (value: unknown) => ({ key: 'input', value: asString(value) })
-const apSwitch = (value: unknown) => ({ key: 'switch', value: asBoolean(value) })
-const apSelect = (value: unknown) => ({ key: 'select', value: asString(value) })
-
 const pickMode = (value: unknown, fallback: SyncMode): SyncMode => {
   const v = asString(value).trim().toLowerCase()
   if (v === 'full' || v === '全量') return 'full'
@@ -127,27 +123,47 @@ export default defineConfig<WebConfigData>({
       const groupId = asString(t?.groupId ?? '').trim()
       const title = groupId ? `群 ${groupId}` : '目标群'
 
+      const enabled = Boolean(t?.enabled ?? true)
+      const sourceFolderId = asString(t?.sourceFolderId ?? '')
+      const targetDir = asString(t?.targetDir ?? '')
+      const mode = pickMode(t?.mode, pickMode(defaults?.mode, 'incremental'))
+      const flat = (typeof t?.flat === 'boolean') ? t.flat : Boolean(defaults?.flat ?? false)
+      const maxFiles = asString(t?.maxFiles ?? '')
+      const urlConcurrency = asString(t?.urlConcurrency ?? '')
+      const transferConcurrency = asString(t?.transferConcurrency ?? '')
+      const fileTimeoutSec = asString(t?.fileTimeoutSec ?? '')
+      const retryTimes = asString(t?.retryTimes ?? '')
+      const retryDelayMs = asString(t?.retryDelayMs ?? '')
+      const progressReportEvery = asString(t?.progressReportEvery ?? '')
+      const downloadLimitKbps = asString(t?.downloadLimitKbps ?? '')
+      const uploadLimitKbps = asString(t?.uploadLimitKbps ?? '')
+      const timeWindows = asString(t?.timeWindows ?? '')
+      const scheduleEnabled = Boolean(t?.schedule?.enabled ?? false)
+      const scheduleCron = asString(t?.schedule?.cron ?? '')
+      const uploadBackup = Boolean(t?.uploadBackup ?? false)
+
       return {
         title,
         subtitle: '\u200b',
         gst_groupId: groupId,
-        gst_enabled: Boolean(t?.enabled ?? true),
-        gst_sourceFolderId: asString(t?.sourceFolderId ?? ''),
-        gst_targetDir: asString(t?.targetDir ?? ''),
-        gst_mode: pickMode(t?.mode, pickMode(defaults?.mode, 'incremental')),
-        gst_flat: (typeof t?.flat === 'boolean') ? t.flat : Boolean(defaults?.flat ?? false),
-        gst_maxFiles: asString(t?.maxFiles ?? ''),
-        gst_urlConcurrency: asString(t?.urlConcurrency ?? ''),
-        gst_transferConcurrency: asString(t?.transferConcurrency ?? ''),
-        gst_fileTimeoutSec: asString(t?.fileTimeoutSec ?? ''),
-        gst_retryTimes: asString(t?.retryTimes ?? ''),
-        gst_retryDelayMs: asString(t?.retryDelayMs ?? ''),
-        gst_progressReportEvery: asString(t?.progressReportEvery ?? ''),
-        gst_downloadLimitKbps: asString(t?.downloadLimitKbps ?? ''),
-        gst_uploadLimitKbps: asString(t?.uploadLimitKbps ?? ''),
-        gst_timeWindows: asString(t?.timeWindows ?? ''),
-        gst_scheduleEnabled: Boolean(t?.schedule?.enabled ?? false),
-        gst_scheduleCron: asString(t?.schedule?.cron ?? ''),
+        gst_enabled: enabled ? 'true' : 'false',
+        gst_uploadBackup: uploadBackup ? 'true' : 'false',
+        gst_sourceFolderId: sourceFolderId,
+        gst_targetDir: targetDir,
+        gst_mode: mode,
+        gst_flat: flat ? 'true' : 'false',
+        gst_maxFiles: maxFiles,
+        gst_urlConcurrency: urlConcurrency,
+        gst_transferConcurrency: transferConcurrency,
+        gst_fileTimeoutSec: fileTimeoutSec,
+        gst_retryTimes: retryTimes,
+        gst_retryDelayMs: retryDelayMs,
+        gst_progressReportEvery: progressReportEvery,
+        gst_downloadLimitKbps: downloadLimitKbps,
+        gst_uploadLimitKbps: uploadLimitKbps,
+        gst_timeWindows: timeWindows,
+        gst_scheduleEnabled: scheduleEnabled ? 'true' : 'false',
+        gst_scheduleCron: scheduleCron,
       }
     })
 
@@ -200,7 +216,7 @@ export default defineConfig<WebConfigData>({
         fullWidth: true,
         children: [
           components.accordionItem.create('openlist', {
-            title: 'OpenList',
+            title: 'Target OpenList',
             subtitle: '\u200b',
             isCompact: true,
             className: grid2,
@@ -208,7 +224,7 @@ export default defineConfig<WebConfigData>({
               components.input.string('openlistBaseUrl', {
                 ...compactInput,
                 className: `sm:col-span-2 ${compactInput.className}`,
-                label: 'OpenList 地址',
+                label: 'OpenList 地址（目的端）',
                 description: '例如：http://127.0.0.1:5244',
                 defaultValue: cfg.openlistBaseUrl ?? 'http://127.0.0.1:5244',
                 placeholder: 'http://127.0.0.1:5244',
@@ -216,14 +232,14 @@ export default defineConfig<WebConfigData>({
               }),
               components.input.string('openlistUsername', {
                 ...compactInput,
-                label: 'OpenList 用户名',
+                label: 'OpenList 用户名（目的端）',
                 description: '用于 WebDAV BasicAuth 登录',
                 defaultValue: cfg.openlistUsername ?? '',
                 isClearable: true,
               }),
               components.input.create('openlistPassword', {
                 ...compactInput,
-                label: 'OpenList 密码',
+                label: 'OpenList 密码（目的端）',
                 description: '用于 WebDAV BasicAuth 登录（会保存到配置文件）',
                 defaultValue: cfg.openlistPassword ?? '',
                 type: 'password',
@@ -232,7 +248,7 @@ export default defineConfig<WebConfigData>({
               components.input.string('openlistTargetDir', {
                 ...compactInput,
                 className: `sm:col-span-2 ${compactInput.className}`,
-                label: 'OpenList 默认目标目录',
+                label: '默认目标目录（群文件/同步）',
                 description: 'WebDAV 目标目录，例如：/挂载目录/QQ群文件',
                 defaultValue: cfg.openlistTargetDir ?? '/',
                 placeholder: '/挂载目录/QQ群文件',
@@ -356,10 +372,24 @@ export default defineConfig<WebConfigData>({
                       placeholder: '123456',
                       isClearable: true,
                     }),
-                    components.switch.options('gst_enabled', {
-                      ...compactSwitch,
+                    components.select.create('gst_enabled', {
+                      ...compactSelect,
                       label: '启用自动同步',
-                      defaultSelected: true,
+                      defaultValue: 'true',
+                      items: [
+                        components.select.createItem('true', { value: 'true', label: '启用' }),
+                        components.select.createItem('false', { value: 'false', label: '禁用' }),
+                      ],
+                    }),
+                    components.select.create('gst_uploadBackup', {
+                      ...compactSelect,
+                      label: '群文件上传自动备份',
+                      description: '监听该群文件上传事件并自动备份到 OpenList（需在该群启用）',
+                      defaultValue: 'false',
+                      items: [
+                        components.select.createItem('false', { value: 'false', label: '关闭' }),
+                        components.select.createItem('true', { value: 'true', label: '开启' }),
+                      ],
                     }),
                     components.select.create('gst_mode', {
                       ...compactSelect,
@@ -385,12 +415,14 @@ export default defineConfig<WebConfigData>({
                       description: '从群文件的指定文件夹开始导出/同步',
                       isClearable: true,
                     }),
-                    components.switch.options('gst_flat', {
-                      ...compactSwitch,
+                    components.select.create('gst_flat', {
+                      ...compactSelect,
                       label: '平铺上传',
-                      startText: '保留结构',
-                      endText: '平铺',
-                      defaultSelected: Boolean(defaults?.flat ?? false),
+                      defaultValue: String(Boolean(defaults?.flat ?? false)),
+                      items: [
+                        components.select.createItem('false', { value: 'false', label: '保留结构' }),
+                        components.select.createItem('true', { value: 'true', label: '平铺' }),
+                      ],
                     }),
                     components.input.number('gst_maxFiles', {
                       ...compactNumber,
@@ -467,10 +499,14 @@ export default defineConfig<WebConfigData>({
                       placeholder: '00:00-06:00,23:00-23:59',
                       isClearable: true,
                     }),
-                    components.switch.options('gst_scheduleEnabled', {
-                      ...compactSwitch,
+                    components.select.create('gst_scheduleEnabled', {
+                      ...compactSelect,
                       label: '启用定时同步',
-                      defaultSelected: false,
+                      defaultValue: 'false',
+                      items: [
+                        components.select.createItem('false', { value: 'false', label: '关闭' }),
+                        components.select.createItem('true', { value: 'true', label: '开启' }),
+                      ],
                     }),
                     components.input.string('gst_scheduleCron', {
                       ...compactInput,
@@ -508,10 +544,24 @@ export default defineConfig<WebConfigData>({
               placeholder: '123456',
               isClearable: true,
             }),
-            components.switch.options('gst_enabled', {
-              ...compactSwitch,
+            components.select.create('gst_enabled', {
+              ...compactSelect,
               label: '启用自动同步',
-              defaultSelected: true,
+              defaultValue: 'true',
+              items: [
+                components.select.createItem('true', { value: 'true', label: '启用' }),
+                components.select.createItem('false', { value: 'false', label: '禁用' }),
+              ],
+            }),
+            components.select.create('gst_uploadBackup', {
+              ...compactSelect,
+              label: '群文件上传自动备份',
+              description: '监听该群文件上传事件并自动备份到 OpenList（需在该群启用）',
+              defaultValue: 'false',
+              items: [
+                components.select.createItem('false', { value: 'false', label: '关闭' }),
+                components.select.createItem('true', { value: 'true', label: '开启' }),
+              ],
             }),
             components.select.create('gst_mode', {
               ...compactSelect,
@@ -537,12 +587,14 @@ export default defineConfig<WebConfigData>({
               description: '从群文件的指定文件夹开始递归同步',
               isClearable: true,
             }),
-            components.switch.options('gst_flat', {
-              ...compactSwitch,
+            components.select.create('gst_flat', {
+              ...compactSelect,
               label: '平铺上传',
-              startText: '保留结构',
-              endText: '平铺',
-              defaultSelected: Boolean(defaults?.flat ?? false),
+              defaultValue: String(Boolean(defaults?.flat ?? false)),
+              items: [
+                components.select.createItem('false', { value: 'false', label: '保留结构' }),
+                components.select.createItem('true', { value: 'true', label: '平铺' }),
+              ],
             }),
             components.input.number('gst_maxFiles', {
               ...compactNumber,
@@ -619,10 +671,14 @@ export default defineConfig<WebConfigData>({
               placeholder: '00:00-06:00,23:00-23:59',
               isClearable: true,
             }),
-            components.switch.options('gst_scheduleEnabled', {
-              ...compactSwitch,
+            components.select.create('gst_scheduleEnabled', {
+              ...compactSelect,
               label: '启用定时同步',
-              defaultSelected: false,
+              defaultValue: 'false',
+              items: [
+                components.select.createItem('false', { value: 'false', label: '关闭' }),
+                components.select.createItem('true', { value: 'true', label: '开启' }),
+              ],
             }),
             components.input.string('gst_scheduleCron', {
               ...compactInput,
@@ -662,7 +718,10 @@ export default defineConfig<WebConfigData>({
 
       next.openlistBaseUrl = asString(flattenedForm.openlistBaseUrl ?? next.openlistBaseUrl)
       next.openlistUsername = asString(flattenedForm.openlistUsername ?? next.openlistUsername)
-      next.openlistPassword = asString(flattenedForm.openlistPassword ?? next.openlistPassword)
+      {
+        const password = asString(flattenedForm.openlistPassword ?? '').trim()
+        if (password) next.openlistPassword = password
+      }
       next.openlistTargetDir = asString(flattenedForm.openlistTargetDir ?? next.openlistTargetDir)
 
       const baseDefaults = next.groupSyncDefaults ?? {}
@@ -689,7 +748,10 @@ export default defineConfig<WebConfigData>({
           const groupId = asString(unwrapAccordionValue(row?.gst_groupId) ?? '').trim()
           if (!groupId) continue
 
-          const enabled = asBoolean(unwrapAccordionValue(row?.gst_enabled) ?? true)
+          const enabledCell = unwrapAccordionValue(row?.gst_enabled)
+          const enabled = (enabledCell == null || (typeof enabledCell === 'string' && !enabledCell.trim()))
+            ? true
+            : asBoolean(enabledCell)
           const mode = pickMode(unwrapAccordionValue(row?.gst_mode), next.groupSyncDefaults?.mode ?? 'incremental')
           const targetDir = asString(unwrapAccordionValue(row?.gst_targetDir) ?? '').trim()
           const sourceFolderId = asString(unwrapAccordionValue(row?.gst_sourceFolderId) ?? '').trim()
@@ -704,6 +766,7 @@ export default defineConfig<WebConfigData>({
           const downloadLimitKbps = asOptionalInt(unwrapAccordionValue(row?.gst_downloadLimitKbps))
           const uploadLimitKbps = asOptionalInt(unwrapAccordionValue(row?.gst_uploadLimitKbps))
           const timeWindows = asString(unwrapAccordionValue(row?.gst_timeWindows) ?? '').trim()
+          const uploadBackup = asBoolean(unwrapAccordionValue(row?.gst_uploadBackup) ?? false)
           const scheduleEnabled = asBoolean(unwrapAccordionValue(row?.gst_scheduleEnabled) ?? false)
           const scheduleCron = asString(unwrapAccordionValue(row?.gst_scheduleCron) ?? '').trim()
 
@@ -726,6 +789,7 @@ export default defineConfig<WebConfigData>({
           if (typeof downloadLimitKbps === 'number' && downloadLimitKbps >= 0) target.downloadLimitKbps = clampInt(downloadLimitKbps, 0, 10000000)
           if (typeof uploadLimitKbps === 'number' && uploadLimitKbps >= 0) target.uploadLimitKbps = clampInt(uploadLimitKbps, 0, 10000000)
           if (timeWindows) target.timeWindows = timeWindows
+          if (uploadBackup) target.uploadBackup = true
           if (scheduleEnabled || scheduleCron) target.schedule = { enabled: scheduleEnabled, cron: scheduleCron }
 
           normalizedTargets.push(target)
@@ -740,7 +804,10 @@ export default defineConfig<WebConfigData>({
           const groupId = groupIds[index]
           if (!groupId) continue
 
-          const enabled = asBoolean(unwrapAccordionValue(getFormRowValue(container, 'gst_enabled', index)) ?? true)
+          const enabledCell = unwrapAccordionValue(getFormRowValue(container, 'gst_enabled', index))
+          const enabled = (enabledCell == null || (typeof enabledCell === 'string' && !enabledCell.trim()))
+            ? true
+            : asBoolean(enabledCell)
           const mode = pickMode(unwrapAccordionValue(getFormRowValue(container, 'gst_mode', index)), next.groupSyncDefaults?.mode ?? 'incremental')
           const targetDir = asString(unwrapAccordionValue(getFormRowValue(container, 'gst_targetDir', index)) ?? '').trim()
           const sourceFolderId = asString(unwrapAccordionValue(getFormRowValue(container, 'gst_sourceFolderId', index)) ?? '').trim()
@@ -755,6 +822,7 @@ export default defineConfig<WebConfigData>({
           const downloadLimitKbps = asOptionalInt(unwrapAccordionValue(getFormRowValue(container, 'gst_downloadLimitKbps', index)))
           const uploadLimitKbps = asOptionalInt(unwrapAccordionValue(getFormRowValue(container, 'gst_uploadLimitKbps', index)))
           const timeWindows = asString(unwrapAccordionValue(getFormRowValue(container, 'gst_timeWindows', index)) ?? '').trim()
+          const uploadBackup = asBoolean(unwrapAccordionValue(getFormRowValue(container, 'gst_uploadBackup', index)) ?? false)
           const scheduleEnabled = asBoolean(unwrapAccordionValue(getFormRowValue(container, 'gst_scheduleEnabled', index)) ?? false)
           const scheduleCron = asString(unwrapAccordionValue(getFormRowValue(container, 'gst_scheduleCron', index)) ?? '').trim()
 
@@ -777,6 +845,7 @@ export default defineConfig<WebConfigData>({
           if (typeof downloadLimitKbps === 'number' && downloadLimitKbps >= 0) target.downloadLimitKbps = clampInt(downloadLimitKbps, 0, 10000000)
           if (typeof uploadLimitKbps === 'number' && uploadLimitKbps >= 0) target.uploadLimitKbps = clampInt(uploadLimitKbps, 0, 10000000)
           if (timeWindows) target.timeWindows = timeWindows
+          if (uploadBackup) target.uploadBackup = true
           if (scheduleEnabled || scheduleCron) target.schedule = { enabled: scheduleEnabled, cron: scheduleCron }
 
           normalizedTargets.push(target)

@@ -5,9 +5,10 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { dir } from '@/dir'
 import { config, time } from '@/utils'
-import { karin, logger } from 'node-karin'
+import { karin, logger, hooks } from 'node-karin'
 
 type SyncMode = 'full' | 'incremental'
+type OpenListBackupTransport = 'auto' | 'webdav' | 'api'
 
 const MAX_FILE_TIMEOUT_SEC = 3000
 const MIN_FILE_TIMEOUT_SEC = 10
@@ -101,7 +102,8 @@ const safePathSegment = (input: string) => {
     .replaceAll('\\', '_')
     .replaceAll('/', '_')
     .trim()
-  return value || 'unnamed'
+  if (!value || value === '.' || value === '..') return 'unnamed'
+  return value
 }
 
 const encodePathForUrl = (posixPath: string) => {
@@ -378,11 +380,40 @@ const buildOpenListDavBaseUrl = (baseUrl: string) => {
   return `${normalized}/dav`
 }
 
+const buildOpenListApiBaseUrl = (baseUrl: string) => {
+  const normalized = String(baseUrl ?? '').trim().replace(/\/+$/, '')
+  if (!normalized) return ''
+  return `${normalized}/api`
+}
+
+const isSameOriginUrl = (a: string, b: string) => {
+  try {
+    return new URL(a).origin === new URL(b).origin
+  } catch {
+    return false
+  }
+}
+
+const buildOpenListRawUrlAuthHeaders = (params: { rawUrl: string, baseUrl: string, token: string }) => {
+  const { rawUrl, baseUrl, token } = params
+  if (!token) return undefined
+  if (!isSameOriginUrl(rawUrl, baseUrl)) return undefined
+  return { Authorization: token }
+}
+
 const buildOpenListAuthHeader = (username: string, password: string) => {
   const user = String(username ?? '')
   const pass = String(password ?? '')
   const token = Buffer.from(`${user}:${pass}`).toString('base64')
   return `Basic ${token}`
+}
+
+const normalizeOpenListBackupTransport = (value: unknown, fallback: OpenListBackupTransport): OpenListBackupTransport => {
+  const v = String(value ?? '').trim().toLowerCase()
+  if (v === 'api') return 'api'
+  if (v === 'webdav' || v === 'dav') return 'webdav'
+  if (v === 'auto') return 'auto'
+  return fallback
 }
 
 const formatErrorMessage = (error: unknown) => {
@@ -404,6 +435,11 @@ const isAbortError = (error: unknown) => {
   return Boolean(error && typeof error === 'object' && 'name' in (error as any) && (error as any).name === 'AbortError')
 }
 
+const isRetryableWebDavError = (error: unknown) => {
+  const msg = formatErrorMessage(error)
+  return /ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|UND_ERR|socket hang up/i.test(msg)
+}
+
 const fetchTextSafely = async (res: Response) => {
   try {
     const text = await res.text()
@@ -414,6 +450,367 @@ const fetchTextSafely = async (res: Response) => {
 }
 
 const webdavMkcolOk = (status: number) => status === 201 || status === 405
+
+type OpenListApiResponse<T = unknown> = {
+  code?: number
+  message?: string
+  data?: T
+}
+
+const openlistApiReadJson = async <T>(res: Response): Promise<OpenListApiResponse<T>> => {
+  try {
+    return await res.json() as any
+  } catch {
+    return {}
+  }
+}
+
+const openlistApiLogin = async (params: {
+  baseUrl: string
+  username: string
+  password: string
+  timeoutMs: number
+}) => {
+  const { baseUrl, username, password, timeoutMs } = params
+  const apiBaseUrl = buildOpenListApiBaseUrl(baseUrl)
+  if (!apiBaseUrl) throw new Error(`OpenList API 地址不正确: ${baseUrl}`)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, Math.floor(timeoutMs) || 0))
+
+  try {
+    const url = `${apiBaseUrl}/auth/login`
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: String(username ?? ''),
+          password: String(password ?? ''),
+        }),
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error(`OpenList 登录超时: ${baseUrl}`)
+      throw new Error(`OpenList 登录请求失败: ${baseUrl} - ${formatErrorMessage(error)}`)
+    }
+
+    if (!res.ok) {
+      const body = await fetchTextSafely(res)
+      throw new Error(`OpenList 登录失败: ${baseUrl} -> ${res.status} ${res.statusText}${body ? ` - ${body}` : ''}`)
+    }
+
+    const json = await openlistApiReadJson<{ token?: string }>(res)
+    if (typeof (json as any)?.code === 'number' && (json as any).code !== 200) {
+      const msg = json?.message ? ` - ${json.message}` : ''
+      throw new Error(`OpenList 登录失败: ${baseUrl} -> code=${(json as any).code}${msg}`)
+    }
+    if (typeof json?.data?.token === 'string' && json.data.token) return json.data.token
+    const hint = json?.message ? ` - ${json.message}` : ''
+    throw new Error(`OpenList 登录失败: ${baseUrl} 未获取到 token${hint}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const openlistApiPost = async <T>(params: {
+  baseUrl: string
+  token?: string
+  apiPath: string
+  body: any
+  timeoutMs: number
+}) => {
+  const { baseUrl, token, apiPath, body, timeoutMs } = params
+  const apiBaseUrl = buildOpenListApiBaseUrl(baseUrl)
+  if (!apiBaseUrl) throw new Error('OpenList API 地址不正确，请检查 baseUrl')
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, Math.floor(timeoutMs) || 0))
+
+  try {
+    const url = `${apiBaseUrl}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`
+    let res: Response
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      const authToken = String(token ?? '').trim()
+      if (authToken) headers.Authorization = authToken
+
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body ?? {}),
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error(`OpenList API 请求超时: ${apiPath}`)
+      throw new Error(`OpenList API 请求失败: ${apiPath} - ${formatErrorMessage(error)}`)
+    }
+
+    if (!res.ok) {
+      const text = await fetchTextSafely(res)
+      throw new Error(`OpenList API 失败: ${apiPath} -> ${res.status} ${res.statusText}${text ? ` - ${text}` : ''}`)
+    }
+
+    const json = await openlistApiReadJson<T>(res)
+    if (typeof json?.code === 'number' && json.code !== 200) {
+      const msg = json?.message ? ` - ${json.message}` : ''
+      throw new Error(`OpenList API 失败: ${apiPath} -> code=${json.code}${msg}`)
+    }
+    return json
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const openlistApiListEntries = async (params: {
+  baseUrl: string
+  token?: string
+  dirPath: string
+  timeoutMs: number
+  perPage?: number
+}) => {
+  const { baseUrl, token, dirPath, timeoutMs } = params
+  type FsListItem = { name?: string, is_dir?: boolean }
+  type FsListData = { content?: FsListItem[], total?: number }
+
+  const normalized = normalizePosixPath(dirPath)
+  const requestedPerPage = typeof params.perPage === 'number' ? params.perPage : 1000
+  const perPage = Math.max(1, Math.min(5000, Math.floor(requestedPerPage) || 1000))
+  const out: WebDavEntry[] = []
+
+  const maxPages = 20_000
+  for (let page = 1; page <= maxPages; page++) {
+    const json = await openlistApiPost<FsListData>({
+      baseUrl,
+      token,
+      apiPath: '/fs/list',
+      timeoutMs,
+      body: {
+        path: normalized,
+        password: '',
+        page,
+        per_page: perPage,
+        refresh: false,
+      },
+    })
+
+    const items = Array.isArray(json?.data?.content) ? json.data.content : []
+    for (const it of items) {
+      const name = String(it?.name ?? '').trim()
+      if (!name) continue
+      out.push({ name, isDir: Boolean(it?.is_dir) })
+    }
+
+    const total = typeof json?.data?.total === 'number' ? json.data.total : undefined
+    if (!items.length) break
+    if (typeof total === 'number' && Number.isFinite(total) && out.length >= total) break
+  }
+
+  return out
+}
+
+const openlistApiGetRawUrl = async (params: {
+  baseUrl: string
+  token?: string
+  filePath: string
+  timeoutMs: number
+}) => {
+  const { baseUrl, token, filePath, timeoutMs } = params
+  type FsGetData = { raw_url?: string }
+  const normalized = normalizePosixPath(filePath)
+  const json = await openlistApiPost<FsGetData>({
+    baseUrl,
+    token,
+    apiPath: '/fs/get',
+    timeoutMs,
+    body: { path: normalized, password: '', refresh: false },
+  })
+  const rawUrl = typeof json?.data?.raw_url === 'string' ? json.data.raw_url : ''
+  if (!rawUrl) throw new Error(`OpenList 获取 raw_url 失败: ${normalized}`)
+  return rawUrl
+}
+
+const openlistApiPathExists = async (params: {
+  baseUrl: string
+  token?: string
+  path: string
+  timeoutMs: number
+}) => {
+  const { baseUrl, token, path: filePath, timeoutMs } = params
+  try {
+    await openlistApiPost({
+      baseUrl,
+      token,
+      apiPath: '/fs/get',
+      timeoutMs,
+      body: { path: normalizePosixPath(filePath), password: '', refresh: false },
+    })
+    return true
+  } catch (error) {
+    const msg = formatErrorMessage(error)
+    if (/code=404\b/i.test(msg) || /not found/i.test(msg) || /object not found/i.test(msg)) return false
+    return false
+  }
+}
+
+const createOpenListApiDirEnsurer = (baseUrl: string, token: string | undefined, timeoutMs: number) => {
+  const ensured = new Map<string, Promise<void>>()
+  const requestTimeoutMs = Math.max(1_000, Math.floor(timeoutMs) || 0)
+
+  const ensureDir = async (dirPath: string) => {
+    const normalized = normalizePosixPath(dirPath)
+    if (normalized === '/') return
+
+    const segments = normalized.split('/').filter(Boolean)
+    let current = ''
+
+    for (const segment of segments) {
+      current += `/${segment}`
+
+      const existing = ensured.get(current)
+      if (existing) {
+        await existing
+        continue
+      }
+
+      const promise = (async () => {
+        try {
+          await openlistApiPost({
+            baseUrl,
+            token,
+            apiPath: '/fs/mkdir',
+            timeoutMs: requestTimeoutMs,
+            body: { path: current },
+          })
+        } catch (error) {
+          const msg = formatErrorMessage(error)
+          if (/exist/i.test(msg) || /already/i.test(msg) || /重复/i.test(msg)) return
+          throw error
+        }
+      })()
+
+      ensured.set(current, promise)
+      try {
+        await promise
+      } catch (error) {
+        ensured.delete(current)
+        throw error
+      }
+    }
+  }
+
+  return { ensureDir }
+}
+
+const downloadAndUploadByOpenListApiPut = async (params: {
+  sourceUrl: string
+  sourceHeaders?: Record<string, string>
+  targetBaseUrl: string
+  targetToken?: string
+  targetPath: string
+  timeoutMs: number
+}) => {
+  const { sourceUrl, sourceHeaders, targetBaseUrl, targetToken, targetPath, timeoutMs } = params
+
+  const apiBaseUrl = buildOpenListApiBaseUrl(targetBaseUrl)
+  if (!apiBaseUrl) throw new Error('目标 OpenList API 地址不正确，请检查目标 OpenList 地址')
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    let downloadRes: Response
+    try {
+      downloadRes = await fetch(sourceUrl, {
+        headers: sourceHeaders,
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error('源端读取超时')
+      throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
+    }
+
+    if (!downloadRes.ok) {
+      const body = await fetchTextSafely(downloadRes)
+      throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
+    }
+    if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
+
+    const headers: Record<string, string> = {
+      'File-Path': encodeURIComponent(normalizePosixPath(targetPath)),
+    }
+    const authToken = String(targetToken ?? '').trim()
+    if (authToken) headers.Authorization = authToken
+    const contentType = downloadRes.headers.get('content-type')
+    const contentLength = downloadRes.headers.get('content-length')
+    if (contentType) headers['Content-Type'] = contentType
+    if (contentLength) headers['Content-Length'] = contentLength
+
+    const sourceStream = Readable.fromWeb(downloadRes.body as any)
+
+    let putRes: Response
+    try {
+      putRes = await fetch(`${apiBaseUrl}/fs/put`, {
+        method: 'PUT',
+        headers,
+        body: sourceStream as any,
+        // @ts-expect-error Node fetch streaming body requires duplex
+        duplex: 'half',
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端OpenList连接/权限）')
+      throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
+    }
+
+    if (!putRes.ok) {
+      const body = await fetchTextSafely(putRes)
+      throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
+    }
+
+    const json = await openlistApiReadJson(putRes)
+    if (typeof json?.code === 'number' && json.code !== 200) {
+      const msg = json?.message ? ` - ${json.message}` : ''
+      throw new Error(`目标端写入失败: code=${json.code}${msg}`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const retryAsync = async <T>(
+  fn: () => Promise<T>,
+  options: {
+    retries: number
+    delaysMs?: number[]
+    isRetryable?: (error: unknown) => boolean
+  },
+) => {
+  const retries = Math.max(0, Math.floor(options.retries) || 0)
+  const delaysMs = options.delaysMs?.length ? options.delaysMs : [300, 900, 2_000]
+  const isRetryable = options.isRetryable ?? (() => true)
+
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (attempt >= retries || !isRetryable(error)) throw error
+      const delay = delaysMs[Math.min(attempt, delaysMs.length - 1)]
+      await sleep(delay)
+    }
+  }
+
+  throw lastError
+}
 
 const createWebDavDirEnsurer = (davBaseUrl: string, auth: string, timeoutMs: number) => {
   const ensured = new Map<string, Promise<void>>()
@@ -482,12 +879,13 @@ const createWebDavDirEnsurer = (davBaseUrl: string, auth: string, timeoutMs: num
 
 const downloadAndUploadByWebDav = async (params: {
   sourceUrl: string
+  sourceHeaders?: Record<string, string>
   targetUrl: string
   auth: string
   timeoutMs: number
   rateLimitBytesPerSec?: number
 }) => {
-  const { sourceUrl, targetUrl, auth, timeoutMs, rateLimitBytesPerSec } = params
+  const { sourceUrl, sourceHeaders, targetUrl, auth, timeoutMs, rateLimitBytesPerSec } = params
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -495,7 +893,7 @@ const downloadAndUploadByWebDav = async (params: {
   try {
     let downloadRes: Response
     try {
-      downloadRes = await fetch(sourceUrl, { redirect: 'follow', signal: controller.signal })
+      downloadRes = await fetch(sourceUrl, { headers: sourceHeaders, redirect: 'follow', signal: controller.signal })
     } catch (error) {
       if (isAbortError(error)) throw new Error('下载超时（URL可能已失效）')
       throw new Error(`下载请求失败: ${formatErrorMessage(error)}`)
@@ -1413,4 +1811,863 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
   log: true,
   name: '同步群文件到OpenList',
   permission: 'all',
+})
+
+type WebDavEntry = { name: string, isDir: boolean }
+
+const webdavPropfindListEntries = async (params: {
+  davBaseUrl: string
+  auth?: string
+  dirPath: string
+  timeoutMs: number
+}) => {
+  const { davBaseUrl, auth, dirPath, timeoutMs } = params
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const url = `${davBaseUrl}${encodePathForUrl(dirPath)}`
+    const requestPath = encodePathForUrl(dirPath).replace(/\/+$/, '')
+    const body = `<?xml version="1.0" encoding="utf-8" ?>\n<d:propfind xmlns:d="DAV:">\n  <d:prop>\n    <d:displayname />\n    <d:resourcetype />\n  </d:prop>\n</d:propfind>`
+    const headers: Record<string, string> = {
+      Depth: '1',
+      'Content-Type': 'application/xml; charset=utf-8',
+    }
+    const authHeader = String(auth ?? '').trim()
+    if (authHeader) headers.Authorization = authHeader
+
+    const res = await fetch(url, {
+      method: 'PROPFIND',
+      headers,
+      body,
+      redirect: 'follow',
+      signal: controller.signal,
+    })
+
+    if (!res.ok) return [] as WebDavEntry[]
+    const text = await res.text()
+    if (!text) return [] as WebDavEntry[]
+
+    const out: WebDavEntry[] = []
+    const responseRegex = /<d:response\b[\s\S]*?<\/d:response>/gi
+    let match: RegExpExecArray | null
+    while ((match = responseRegex.exec(text))) {
+      const block = match[0] ?? ''
+      const hrefMatch = block.match(/<d:href>([^<]+)<\/d:href>/i)
+      if (!hrefMatch) continue
+      const href = hrefMatch[1] ?? ''
+      const decoded = decodeURIComponent(href)
+      const cleaned = decoded.replace(/\/+$/, '')
+
+      // 注意：dirPath='/' 时 requestPath 会变成空字符串，endsWith('') 永远为 true，会导致列表被清空
+      if (requestPath && cleaned.endsWith(requestPath)) continue
+
+      const name = cleaned.split('/').filter(Boolean).pop()
+      if (!name) continue
+
+      const isDir = /<d:collection\b/i.test(block) || /\/$/.test(decoded)
+      out.push({ name, isDir })
+    }
+
+    const selfBase = normalizePosixPath(dirPath).split('/').filter(Boolean).pop()
+    const unique = new Map<string, WebDavEntry>()
+    for (const it of out) {
+      if (selfBase && it.name === selfBase) continue
+      unique.set(`${it.name}::${it.isDir ? 'd' : 'f'}`, it)
+    }
+    return [...unique.values()]
+  } catch {
+    return [] as WebDavEntry[]
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const safeHostDirName = (baseUrl: string) => {
+  try {
+    const u = new URL(String(baseUrl))
+    const host = u.hostname || String(baseUrl)
+    const port = u.port ? `_${u.port}` : ''
+    const raw = `${host}${port}`.replaceAll('.', '_').replaceAll(':', '_')
+    return safePathSegment(raw)
+  } catch {
+    const raw = String(baseUrl ?? '').replace(/^https?:\/\//i, '').replaceAll('.', '_').replaceAll(':', '_')
+    return safePathSegment(raw)
+  }
+}
+
+const webdavHeadExists = async (params: {
+  davBaseUrl: string
+  auth: string
+  filePath: string
+  timeoutMs: number
+}) => {
+  const { davBaseUrl, auth, filePath, timeoutMs } = params
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const url = `${davBaseUrl}${encodePathForUrl(filePath)}`
+    const res = await fetch(url, {
+      method: 'HEAD',
+      headers: { Authorization: auth },
+      redirect: 'follow',
+      signal: controller.signal,
+    })
+    return res.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const copyWebDavToWebDav = async (params: {
+  sourceDavBaseUrl: string
+  sourceAuth?: string
+  sourcePath: string
+  targetDavBaseUrl: string
+  targetAuth: string
+  targetPath: string
+  timeoutMs: number
+}) => {
+  const { sourceDavBaseUrl, sourceAuth, sourcePath, targetDavBaseUrl, targetAuth, targetPath, timeoutMs } = params
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const sourceUrl = `${sourceDavBaseUrl}${encodePathForUrl(sourcePath)}`
+    const targetUrl = `${targetDavBaseUrl}${encodePathForUrl(targetPath)}`
+
+    let downloadRes: Response
+    try {
+      const downloadHeaders: Record<string, string> = {}
+      const authHeader = String(sourceAuth ?? '').trim()
+      if (authHeader) downloadHeaders.Authorization = authHeader
+      downloadRes = await fetch(sourceUrl, {
+        method: 'GET',
+        headers: downloadHeaders,
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error('源端读取超时')
+      throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
+    }
+
+    if (!downloadRes.ok) {
+      const body = await fetchTextSafely(downloadRes)
+      throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
+    }
+    if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
+
+    const headers: Record<string, string> = { Authorization: targetAuth }
+    const contentType = downloadRes.headers.get('content-type')
+    const contentLength = downloadRes.headers.get('content-length')
+    if (contentType) headers['Content-Type'] = contentType
+    if (contentLength) headers['Content-Length'] = contentLength
+
+    const sourceStream = Readable.fromWeb(downloadRes.body as any)
+
+    let putRes: Response
+    try {
+      putRes = await fetch(targetUrl, {
+        method: 'PUT',
+        headers,
+        body: sourceStream as any,
+        // @ts-expect-error Node fetch streaming body requires duplex
+        duplex: 'half',
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端 OpenList 连接/权限）')
+      throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
+    }
+
+    if (!putRes.ok) {
+      const body = await fetchTextSafely(putRes)
+      throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const parseBackupOpenListArgs = (text: string) => {
+  const raw = text.trim()
+  const tokens = raw ? raw.split(/\s+/).filter(Boolean) : []
+  const help = /(^|\s)(--help|-h|help|\?)(\s|$)/i.test(raw)
+
+  const first = tokens[0]
+  const sourceBaseUrl = first && /^https?:\/\//i.test(first) ? first : undefined
+  const restRaw = sourceBaseUrl ? raw.slice(first.length).trim() : raw
+
+  const srcMatch = restRaw.match(/--src\s+(\S+)/i) ?? restRaw.match(/(^|\s)src=(\S+)/i)
+  const srcDir = srcMatch ? srcMatch[srcMatch.length - 1] : undefined
+  const srcSpecified = Boolean(srcMatch)
+
+  const toMatch = restRaw.match(/--to\s+(\S+)/i) ?? restRaw.match(/(^|\s)to=(\S+)/i)
+  const toDir = toMatch ? toMatch[toMatch.length - 1] : undefined
+  const toSpecified = Boolean(toMatch)
+
+  const maxMatch = restRaw.match(/--max\s+(\d+)/i) ?? restRaw.match(/(^|\s)max=(\d+)/i)
+  const maxFiles = maxMatch ? Number(maxMatch[maxMatch.length - 1]) : undefined
+
+  const concurrencyMatch = restRaw.match(/--concurrency\s+(\d+)/i) ?? restRaw.match(/(^|\s)concurrency=(\d+)/i)
+  const concurrency = concurrencyMatch ? Number(concurrencyMatch[concurrencyMatch.length - 1]) : undefined
+  const concurrencySpecified = Boolean(concurrencyMatch)
+
+  const timeoutMatch = restRaw.match(/--timeout\s+(\d+)/i) ?? restRaw.match(/(^|\s)timeout=(\d+)/i)
+  const timeoutSec = timeoutMatch ? Number(timeoutMatch[timeoutMatch.length - 1]) : undefined
+  const timeoutSpecified = Boolean(timeoutMatch)
+
+  const scanMatch = restRaw.match(/--scan(?:-concurrency)?\s+(\d+)/i)
+    ?? restRaw.match(/(^|\s)scan=(\d+)/i)
+    ?? restRaw.match(/(^|\s)scanConcurrency=(\d+)/i)
+    ?? restRaw.match(/(^|\s)scan_concurrency=(\d+)/i)
+  const scanConcurrency = scanMatch ? Number(scanMatch[scanMatch.length - 1]) : undefined
+  const scanConcurrencySpecified = Boolean(scanMatch)
+
+  const perPageMatch = restRaw.match(/--per-page\s+(\d+)/i)
+    ?? restRaw.match(/--perpage\s+(\d+)/i)
+    ?? restRaw.match(/--page-size\s+(\d+)/i)
+    ?? restRaw.match(/(^|\s)per[_-]?page=(\d+)/i)
+    ?? restRaw.match(/(^|\s)pageSize=(\d+)/i)
+    ?? restRaw.match(/(^|\s)per_page=(\d+)/i)
+  const perPage = perPageMatch ? Number(perPageMatch[perPageMatch.length - 1]) : undefined
+  const perPageSpecified = Boolean(perPageMatch)
+
+  const modeFull = /(^|\s)(--full|full)(\s|$)/i.test(restRaw)
+  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental)(\s|$)/i.test(restRaw)
+  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
+
+  const transportApi = /(^|\s)(--api)(\s|$)/i.test(restRaw)
+  const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(restRaw)
+  const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(restRaw)
+  const transportSpecified = transportApi || transportWebDav || transportAuto
+  const transport: OpenListBackupTransport | undefined = transportApi ? 'api' : transportWebDav ? 'webdav' : transportAuto ? 'auto' : undefined
+
+  return {
+    sourceBaseUrl,
+    srcDir,
+    srcSpecified,
+    toDir,
+    toSpecified,
+    maxFiles,
+    concurrency,
+    concurrencySpecified,
+    timeoutSec,
+    timeoutSpecified,
+    scanConcurrency,
+    scanConcurrencySpecified,
+    perPage,
+    perPageSpecified,
+    mode,
+    transport,
+    transportSpecified,
+    help,
+  }
+}
+
+const openListToOpenListHelpText = [
+  'OpenList -> OpenList 备份用法：',
+  '- 私聊：#备份oplist [源OpenList地址] [参数]',
+  '- 示例：#备份oplist https://pan.example.com',
+  '- #备份oplist https://pan.example.com --src / --to /backup --inc',
+  '- #备份oplist https://pan.example.com --api',
+  '- #备份oplist https://pan.example.com --webdav',
+  '- #备份oplist https://pan.example.com --full --concurrency 3 --timeout 600',
+  '- #备份oplist https://pan.example.com --scan 30 --per-page 2000',
+  '提示：备份目的端使用 openlistBaseUrl/openlistUsername/openlistPassword（与群文件备份/同步共用）。',
+  '提示：传输默认 auto（下载走 API，上传走 WebDAV；失败自动回退到可用方式）。',
+  '提示：--scan 只影响“获取文件列表”的并发；--per-page 只影响源端列表走 API 时的每页数量（值越大越快，但可能更吃内存/更容易被限流）。',
+  '说明：会在目的端目标目录下创建子目录（源 OpenList 域名，"." 替换为 "_"），并同步其下所有文件。',
+].join('\n')
+
+const activeOpenListBackup = new Set<string>()
+
+export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
+  const argsText = e.msg.replace(/^#?备份oplist/i, '')
+  const {
+    sourceBaseUrl: sourceBaseUrlArg,
+    srcDir,
+    srcSpecified,
+    toDir,
+    toSpecified,
+    maxFiles,
+    concurrency,
+    concurrencySpecified,
+    timeoutSec,
+    timeoutSpecified,
+    scanConcurrency: scanConcurrencyArg,
+    scanConcurrencySpecified,
+    perPage: perPageArg,
+    perPageSpecified,
+    mode: forcedMode,
+    transport: forcedTransport,
+    transportSpecified,
+    help,
+  } = parseBackupOpenListArgs(argsText)
+  if (help) {
+    await e.reply(openListToOpenListHelpText)
+    return true
+  }
+
+  const cfg = config()
+
+  const sourceBaseUrl = String(sourceBaseUrlArg ?? '').trim()
+
+  const targetBaseUrl = String(cfg.openlistBaseUrl ?? '').trim()
+  const targetUsername = String(cfg.openlistUsername ?? '').trim()
+  const targetPassword = String(cfg.openlistPassword ?? '').trim()
+
+  if (!sourceBaseUrl) {
+    await e.reply(openListToOpenListHelpText)
+    return true
+  }
+
+  if (!targetBaseUrl || !targetUsername || !targetPassword) {
+    await e.reply('请先配置目的端 OpenList 信息（openlistBaseUrl/openlistUsername/openlistPassword）')
+    return true
+  }
+
+  const srcDavBaseUrl = buildOpenListDavBaseUrl(sourceBaseUrl)
+  const targetDavBaseUrl = buildOpenListDavBaseUrl(targetBaseUrl)
+  if (!srcDavBaseUrl) {
+    await e.reply('源 OpenList 地址不正确，请检查命令参数')
+    return true
+  }
+  if (!targetDavBaseUrl) {
+    await e.reply('目的端 OpenList 地址不正确，请检查 openlistBaseUrl')
+    return true
+  }
+
+  const srcAuth = ''
+  const targetAuth = buildOpenListAuthHeader(targetUsername, targetPassword)
+
+  const transport = forcedTransport ?? 'auto'
+
+  const mode = forcedMode ?? 'incremental'
+  const copyConcurrency = concurrencySpecified
+    ? (typeof concurrency === 'number' ? concurrency : 3)
+    : 3
+
+  const fileTimeout = timeoutSpecified
+    ? (typeof timeoutSec === 'number' ? timeoutSec : 600)
+    : 600
+
+  const normalizedSrcDir = normalizePosixPath(srcSpecified ? (srcDir ?? '') : '/')
+  const normalizedTargetBaseDir = normalizePosixPath(
+    toSpecified
+      ? (toDir ?? '')
+      : (String(cfg.openlistTargetDir ?? '/').trim() || '/')
+  )
+  const targetRoot = normalizePosixPath(path.posix.join(normalizedTargetBaseDir, safeHostDirName(sourceBaseUrl)))
+
+  const lockKey = `${sourceBaseUrl} -> ${targetBaseUrl}`
+  if (activeOpenListBackup.has(lockKey)) {
+    await e.reply('备份任务正在进行中，请稍后再试。')
+    return true
+  }
+
+  let ticker: ReturnType<typeof setInterval> | undefined
+  let tickChain: Promise<unknown> = Promise.resolve()
+
+  activeOpenListBackup.add(lockKey)
+  try {
+    await e.reply([
+      '开始备份 OpenList...',
+      `源：${sourceBaseUrl}`,
+      `源目录：${normalizedSrcDir}`,
+      `目的端：${targetBaseUrl}`,
+      `目的端目录：${targetRoot}`,
+      `模式：${mode}`,
+      `传输：${transport}`,
+    ].join('\n'))
+
+    const timeoutMs = Math.min(MAX_FILE_TIMEOUT_SEC, Math.max(MIN_FILE_TIMEOUT_SEC, Math.floor(fileTimeout) || MIN_FILE_TIMEOUT_SEC)) * 1000
+    const listTimeoutMs = Math.min(15_000, timeoutMs)
+    const listPerPage = perPageSpecified
+      ? Math.max(1, Math.min(5000, Math.floor(perPageArg || 0) || 1000))
+      : 1000
+
+    const allowAutoFallback = transport === 'auto'
+
+    // 默认策略：源端下载走 API，目标端上传走 WebDAV；允许通过 --api/--webdav 强制覆盖
+    let sourceTransport: Exclude<OpenListBackupTransport, 'auto'> = transport === 'webdav' ? 'webdav' : 'api'
+    let targetTransport: Exclude<OpenListBackupTransport, 'auto'> = transport === 'api' ? 'api' : 'webdav'
+
+    let sourceToken: string | undefined
+    let targetToken: string | undefined
+    let targetTokenPromise: Promise<string> | undefined
+    const getSourceToken = async () => {
+      if (typeof sourceToken === 'string') return sourceToken
+      // 源站点允许公开访问时，不需要登录；token 为空即 guest
+      sourceToken = ''
+      return sourceToken
+    }
+    const getTargetToken = async () => {
+      if (typeof targetToken === 'string') return targetToken
+      if (targetTokenPromise) return await targetTokenPromise
+      targetTokenPromise = openlistApiLogin({
+        baseUrl: targetBaseUrl,
+        username: targetUsername,
+        password: targetPassword,
+        timeoutMs: listTimeoutMs,
+      }).then((token) => {
+        targetToken = token
+        return token
+      }).catch((error) => {
+        targetTokenPromise = undefined
+        throw error
+      })
+      return await targetTokenPromise
+    }
+
+    const targetDirEnsurerWebDav = createWebDavDirEnsurer(targetDavBaseUrl, targetAuth, timeoutMs)
+    let targetDirEnsurerApi: ReturnType<typeof createOpenListApiDirEnsurer> | undefined
+    const getTargetDirEnsurerApi = async () => {
+      if (targetDirEnsurerApi) return targetDirEnsurerApi
+      const token = await getTargetToken()
+      targetDirEnsurerApi = createOpenListApiDirEnsurer(targetBaseUrl, token, timeoutMs)
+      return targetDirEnsurerApi
+    }
+
+    const ensureTargetDir = async (dirPath: string) => {
+      let webdavError: unknown
+      if (targetTransport === 'webdav') {
+        try {
+          await retryAsync(() => targetDirEnsurerWebDav.ensureDir(dirPath), { retries: 2, isRetryable: isRetryableWebDavError })
+          return
+        } catch (error) {
+          webdavError = error
+          if (!allowAutoFallback) throw error
+          targetTransport = 'api'
+        }
+      }
+
+      const ensurer = await getTargetDirEnsurerApi()
+      try {
+        await retryAsync(() => ensurer.ensureDir(dirPath), { retries: 2, isRetryable: isRetryableWebDavError })
+      } catch (error) {
+        if (webdavError) {
+          throw new Error([
+            `目标端 WebDAV 不可用，已回退到 OpenList API，但仍失败。`,
+            `目标：${targetBaseUrl}`,
+            `目录：${dirPath}`,
+            `WebDAV: ${formatErrorMessage(webdavError)}`,
+            `API: ${formatErrorMessage(error)}`,
+            '请检查 openlistUsername/openlistPassword 是否正确，或在目的端启用 WebDAV 管理/放行 MKCOL/PUT。',
+          ].join('\n'))
+        }
+        throw error
+      }
+    }
+
+    const files: string[] = []
+    const visited = new Set<string>()
+    const stack: string[] = [normalizedSrcDir]
+    let scannedDirs = 0
+
+    const max = typeof maxFiles === 'number' && Number.isFinite(maxFiles) && maxFiles > 0 ? Math.floor(maxFiles) : 0
+
+    let ok = 0
+    let skipped = 0
+    let fail = 0
+
+    let phase: 'scan' | 'copy' = 'scan'
+    const startedAt = Date.now()
+    ticker = setInterval(() => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+      const msg = phase === 'scan'
+        ? `备份进行中（${elapsed}s）\n阶段：扫描\n已扫描目录：${scannedDirs}\n已发现文件：${files.length}`
+        : `备份进行中（${elapsed}s）\n阶段：复制\n进度：${ok + skipped + fail}/${files.length}\n成功 ${ok} 跳过 ${skipped} 失败 ${fail}`
+      tickChain = tickChain.then(() => e.reply(msg)).catch(() => undefined)
+    }, 60_000)
+
+    const maxScanConcurrency = scanConcurrencySpecified
+      ? Math.max(1, Math.min(200, Math.floor(scanConcurrencyArg || 0) || 1))
+      : 50
+    let scanConcurrency = scanConcurrencySpecified
+      ? maxScanConcurrency
+      : Math.max(1, Math.min(maxScanConcurrency, Math.max(8, (Math.floor(copyConcurrency) || 1) * 3)))
+    const scanResults: Array<{ ok: boolean, ms: number, reason?: string }> = []
+    const pushScanResult = (ok: boolean, ms: number, reason?: string) => {
+      scanResults.push({ ok, ms, reason })
+      if (scanResults.length > 20) scanResults.shift()
+
+      if (scanResults.length < 10) return
+      if (scanResults.length % 5 !== 0) return
+
+      const failCount = scanResults.filter(r => !r.ok).length
+      const failRate = failCount / scanResults.length
+      const avgMs = scanResults.reduce((acc, r) => acc + r.ms, 0) / scanResults.length
+
+      const hasTimeout = scanResults.some(r => (r.reason || '').includes('超时'))
+      if (hasTimeout || failRate >= 0.2) {
+        if (scanConcurrency > 1) scanConcurrency -= 1
+        return
+      }
+
+      if (failCount === 0 && scanConcurrency < maxScanConcurrency) {
+        if (avgMs < 60_000 || scanResults.length === 20) scanConcurrency += 1
+      }
+    }
+    let stopScan = false
+    let scanError: unknown
+
+    const isRetryableListError = (error: unknown) => {
+      const msg = formatErrorMessage(error)
+      return /超时|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|UND_ERR|socket hang up|\b429\b|\b5\d\d\b/i.test(msg)
+    }
+
+    const listDirEntries = async (dirPath: string) => {
+      return await retryAsync(async () => {
+        return sourceTransport === 'webdav'
+          ? await webdavPropfindListEntries({
+            davBaseUrl: srcDavBaseUrl,
+            auth: srcAuth,
+            dirPath,
+            timeoutMs: listTimeoutMs,
+          })
+          : await openlistApiListEntries({
+            baseUrl: sourceBaseUrl,
+            token: await getSourceToken(),
+            dirPath,
+            timeoutMs: listTimeoutMs,
+            perPage: listPerPage,
+          })
+      }, { retries: 2, isRetryable: isRetryableListError })
+    }
+
+    let scanning = 0
+    let resolveScanDone: (() => void) | undefined
+    const scanDone = new Promise<void>((resolve) => { resolveScanDone = resolve })
+
+    const scheduleScan = () => {
+      while (!stopScan && scanning < scanConcurrency) {
+        const rawPath = stack.pop()
+        if (!rawPath) break
+
+        const current = normalizePosixPath(rawPath)
+        if (visited.has(current)) continue
+        visited.add(current)
+        scannedDirs++
+        scanning++
+
+        ;(async () => {
+          const start = Date.now()
+          try {
+            const entries = await listDirEntries(current)
+            pushScanResult(true, Date.now() - start)
+
+            for (const entry of entries) {
+              if (stopScan) break
+              const childPath = normalizePosixPath(path.posix.join(current, entry.name))
+              if (entry.isDir) {
+                if (!visited.has(childPath)) stack.push(childPath)
+                continue
+              }
+              files.push(childPath)
+              if (max > 0 && files.length >= max) {
+                stopScan = true
+                break
+              }
+            }
+          } catch (error) {
+            pushScanResult(false, Date.now() - start, formatErrorMessage(error))
+            throw error
+          }
+
+          // 如果动态并发上调，尽快填满队列
+          scheduleScan()
+        })().catch((error) => {
+          scanError = error
+          stopScan = true
+        }).finally(() => {
+          scanning--
+          scheduleScan()
+          if ((stopScan || stack.length === 0) && scanning === 0) resolveScanDone?.()
+        })
+      }
+
+      if ((stopScan || stack.length === 0) && scanning === 0) resolveScanDone?.()
+    }
+
+    scheduleScan()
+    await scanDone
+    if (scanError) throw scanError
+
+    if (!files.length) {
+      await e.reply('未发现可备份的文件（源目录为空或无法访问）。')
+      return true
+    }
+
+    phase = 'copy'
+    await ensureTargetDir(targetRoot)
+    await e.reply(`已发现 ${files.length} 个文件，开始复制...`)
+
+    const limit = Math.max(1, Math.min(MAX_TRANSFER_CONCURRENCY, Math.floor(copyConcurrency) || 1))
+
+    await runWithConcurrency(files, limit, async (sourcePath, index) => {
+      const rel = path.posix.relative(normalizedSrcDir, sourcePath)
+      const relParts = rel.split('/').filter(Boolean).map(safePathSegment)
+      const targetPath = normalizePosixPath(path.posix.join(targetRoot, ...relParts))
+      const targetDirPath = normalizePosixPath(path.posix.dirname(targetPath))
+
+      if (mode === 'incremental') {
+        const exists = targetTransport === 'webdav'
+          ? await webdavHeadExists({
+            davBaseUrl: targetDavBaseUrl,
+            auth: targetAuth,
+            filePath: targetPath,
+            timeoutMs: Math.max(5_000, Math.floor(timeoutMs / 5)),
+          })
+          : await openlistApiPathExists({
+            baseUrl: targetBaseUrl,
+            token: await getTargetToken(),
+            path: targetPath,
+            timeoutMs: Math.max(5_000, Math.floor(timeoutMs / 5)),
+          })
+        if (exists) {
+          skipped++
+          return
+        }
+      }
+
+      try {
+        await ensureTargetDir(targetDirPath)
+
+        if (sourceTransport === 'webdav' && targetTransport === 'webdav') {
+          await copyWebDavToWebDav({
+            sourceDavBaseUrl: srcDavBaseUrl,
+            sourceAuth: srcAuth,
+            sourcePath,
+            targetDavBaseUrl,
+            targetAuth,
+            targetPath,
+            timeoutMs,
+          })
+        } else if (sourceTransport === 'webdav' && targetTransport === 'api') {
+          await downloadAndUploadByOpenListApiPut({
+            sourceUrl: `${srcDavBaseUrl}${encodePathForUrl(sourcePath)}`,
+            sourceHeaders: srcAuth ? { Authorization: srcAuth } : undefined,
+            targetBaseUrl: targetBaseUrl,
+            targetToken: await getTargetToken(),
+            targetPath,
+            timeoutMs,
+          })
+        } else if (sourceTransport === 'api' && targetTransport === 'webdav') {
+          const token = await getSourceToken()
+          const rawUrl = await openlistApiGetRawUrl({
+            baseUrl: sourceBaseUrl,
+            token,
+            filePath: sourcePath,
+            timeoutMs: Math.max(5_000, Math.floor(timeoutMs / 5)),
+          })
+          const sourceHeaders = buildOpenListRawUrlAuthHeaders({ rawUrl, baseUrl: sourceBaseUrl, token })
+          await downloadAndUploadByWebDav({
+            sourceUrl: rawUrl,
+            sourceHeaders,
+            targetUrl: `${targetDavBaseUrl}${encodePathForUrl(targetPath)}`,
+            auth: targetAuth,
+            timeoutMs,
+          })
+        } else {
+          const token = await getSourceToken()
+          const rawUrl = await openlistApiGetRawUrl({
+            baseUrl: sourceBaseUrl,
+            token,
+            filePath: sourcePath,
+            timeoutMs: Math.max(5_000, Math.floor(timeoutMs / 5)),
+          })
+          const sourceHeaders = buildOpenListRawUrlAuthHeaders({ rawUrl, baseUrl: sourceBaseUrl, token })
+          await downloadAndUploadByOpenListApiPut({
+            sourceUrl: rawUrl,
+            sourceHeaders,
+            targetBaseUrl: targetBaseUrl,
+            targetToken: await getTargetToken(),
+            targetPath,
+            timeoutMs,
+          })
+        }
+        ok++
+      } catch (error) {
+        fail++
+        logger.error(error)
+      }
+    })
+
+    await e.reply(`备份完成：成功 ${ok}，跳过 ${skipped}，失败 ${fail}`)
+    return true
+  } catch (error: any) {
+    logger.error(error)
+    await e.reply(formatErrorMessage(error))
+    return true
+  } finally {
+    if (ticker) clearInterval(ticker)
+    await tickChain.catch(() => undefined)
+    activeOpenListBackup.delete(lockKey)
+  }
+}, {
+  priority: 9999,
+  log: true,
+  name: 'OpenList备份到对端OpenList',
+  permission: 'all',
+})
+
+const activeGroupFileUploadBackups = new Map<string, Promise<void>>()
+
+const enqueueGroupFileUploadBackup = (groupId: string, task: () => Promise<void>) => {
+  const key = String(groupId)
+  const previous = activeGroupFileUploadBackups.get(key) ?? Promise.resolve()
+  const nextTask = previous.catch(() => undefined).then(task)
+  activeGroupFileUploadBackups.set(key, nextTask)
+  nextTask.finally(() => {
+    if (activeGroupFileUploadBackups.get(key) === nextTask) activeGroupFileUploadBackups.delete(key)
+  })
+}
+
+hooks.eventCall.notice((event: any, _plugin: any, next) => {
+  try {
+    if (!event || event.subEvent !== 'groupFileUploaded') return
+
+    const groupId = String(event.groupId ?? '')
+    if (!groupId) return
+
+    const cfg = config()
+    const targetCfg = getGroupSyncTarget(cfg, groupId)
+    if (!targetCfg || targetCfg.enabled === false || targetCfg.uploadBackup !== true) return
+
+    const file = event.content as any
+    const fid = String(file?.fid ?? '').trim()
+    const name = String(file?.name ?? '').trim()
+    const size = typeof file?.size === 'number' && Number.isFinite(file.size) ? Math.max(0, Math.floor(file.size)) : undefined
+    const getUrl = typeof file?.url === 'function' ? (file.url as () => Promise<string>) : null
+    if (!fid || !name || !getUrl) return
+
+    enqueueGroupFileUploadBackup(groupId, async () => {
+      const baseUrl = String(cfg.openlistBaseUrl ?? '').trim()
+      const username = String(cfg.openlistUsername ?? '').trim()
+      const password = String(cfg.openlistPassword ?? '').trim()
+      const defaultTargetDir = String(cfg.openlistTargetDir ?? '/').trim()
+
+      if (!baseUrl || !username || !password) {
+        logger.error(`[群上传备份][${groupId}] 缺少 OpenList 配置（openlistBaseUrl/openlistUsername/openlistPassword）`)
+        return
+      }
+
+      const davBaseUrl = buildOpenListDavBaseUrl(baseUrl)
+      if (!davBaseUrl) {
+        logger.error(`[群上传备份][${groupId}] OpenList 地址不正确，请检查 openlistBaseUrl`)
+        return
+      }
+
+      const defaults = cfg.groupSyncDefaults ?? {}
+
+      const targetDir = normalizePosixPath(
+        String(targetCfg?.targetDir ?? '').trim() || path.posix.join(String(defaultTargetDir || '/'), String(groupId)),
+      )
+
+      const item: ExportedGroupFile = {
+        path: name,
+        fileId: fid,
+        name,
+        size,
+      }
+
+      const remotePath = buildRemotePathForItem(item, targetDir, true)
+      const remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
+
+      const state = readGroupSyncState(groupId)
+      if (state.files?.[remotePath]?.fileId && String(state.files[remotePath].fileId) === fid) {
+        logger.info(`[群上传备份][${groupId}] 已备份，跳过: ${name} (${fid})`)
+        return
+      }
+
+      const auth = buildOpenListAuthHeader(username, password)
+
+      const fileTimeoutSec = typeof targetCfg?.fileTimeoutSec === 'number'
+        ? targetCfg.fileTimeoutSec
+        : (typeof defaults?.fileTimeoutSec === 'number' ? defaults.fileTimeoutSec : 600)
+
+      const safeFileTimeoutSec = Math.min(
+        MAX_FILE_TIMEOUT_SEC,
+        Math.max(MIN_FILE_TIMEOUT_SEC, Math.floor(fileTimeoutSec || 0)),
+      )
+
+      const rateDown = Math.max(0, Math.floor(typeof targetCfg?.downloadLimitKbps === 'number' ? targetCfg.downloadLimitKbps : (typeof defaults?.downloadLimitKbps === 'number' ? defaults.downloadLimitKbps : 0)))
+      const rateUp = Math.max(0, Math.floor(typeof targetCfg?.uploadLimitKbps === 'number' ? targetCfg.uploadLimitKbps : (typeof defaults?.uploadLimitKbps === 'number' ? defaults.uploadLimitKbps : 0)))
+      const effectiveRateLimitBytesPerSec = (() => {
+        const a = rateDown > 0 ? rateDown * 1024 : 0
+        const b = rateUp > 0 ? rateUp * 1024 : 0
+        if (a > 0 && b > 0) return Math.min(a, b)
+        return a > 0 ? a : b > 0 ? b : 0
+      })()
+
+      const retryTimes = typeof targetCfg?.retryTimes === 'number'
+        ? targetCfg.retryTimes
+        : (typeof defaults?.retryTimes === 'number' ? defaults.retryTimes : 2)
+
+      const retryDelayMs = typeof targetCfg?.retryDelayMs === 'number'
+        ? targetCfg.retryDelayMs
+        : (typeof defaults?.retryDelayMs === 'number' ? defaults.retryDelayMs : 1500)
+
+      const transferTimeoutMs = safeFileTimeoutSec * 1000
+      const webdavTimeoutMs = 15_000
+      const dirEnsurer = createWebDavDirEnsurer(davBaseUrl, auth, webdavTimeoutMs)
+      const targetUrl = `${davBaseUrl}${encodePathForUrl(remotePath)}`
+
+      logger.info(`[群上传备份][${groupId}] 开始: ${name} (${fid}) -> ${remotePath}`)
+
+      let lastError: unknown
+      const attempts = Math.max(0, Math.floor(retryTimes) || 0) + 1
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          await dirEnsurer.ensureDir(remoteDir)
+
+          const url = await getUrl()
+          if (!url) throw new Error('获取文件URL失败')
+
+          await downloadAndUploadByWebDav({
+            sourceUrl: url,
+            targetUrl,
+            auth,
+            timeoutMs: transferTimeoutMs,
+            rateLimitBytesPerSec: effectiveRateLimitBytesPerSec || undefined,
+          })
+
+          state.files[remotePath] = {
+            fileId: fid,
+            size,
+            syncedAt: Date.now(),
+          }
+          state.lastSyncAt = Date.now()
+          writeGroupSyncState(groupId, state)
+
+          logger.info(`[群上传备份][${groupId}] 完成: ${name} -> ${remotePath}`)
+          lastError = undefined
+          break
+        } catch (error) {
+          lastError = error
+          logger.error(error)
+
+          if (attempt < attempts) {
+            const delayMs = Math.max(0, Math.floor(retryDelayMs) || 0) * Math.pow(2, attempt - 1)
+            if (delayMs > 0) await sleep(delayMs)
+          }
+        }
+      }
+
+      if (lastError) {
+        logger.error(`[群上传备份][${groupId}] 失败: ${name} (${fid}) - ${formatErrorMessage(lastError)}`)
+      }
+    })
+  } catch (error) {
+    logger.error(error)
+  } finally {
+    next()
+  }
 })

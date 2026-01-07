@@ -13,6 +13,8 @@ interface GroupSyncTarget {
   targetDir?: string
   mode?: SyncMode
   flat?: boolean
+  /** 监听群文件上传并自动备份到 OpenList */
+  uploadBackup?: boolean
   maxFiles?: number
   urlConcurrency?: number
   transferConcurrency?: number
@@ -82,7 +84,8 @@ const formatTargetLine = (t: GroupSyncTarget) => {
   const enabled = (t.enabled ?? true) ? '启用' : '停用'
   const cron = t.schedule?.enabled ? (t.schedule?.cron || '(未填cron)') : '关闭'
   const targetDir = t.targetDir ? t.targetDir : '(默认)'
-  return `- ${t.groupId} | ${enabled} | ${mode} | 计划:${cron} | 目录:${targetDir}`
+  const uploadBackup = (t.uploadBackup ?? false) ? 'on' : 'off'
+  return `- ${t.groupId} | ${enabled} | ${mode} | uploadBackup:${uploadBackup} | 计划:${cron} | 目录:${targetDir}`
 }
 
 const upsertTarget = (cfg: any, groupId: string, patch: Partial<GroupSyncTarget>) => {
@@ -143,6 +146,7 @@ const cfgHelp = [
   '- #群同步配置 <群号> 模式 全量|增量',
   '- #群同步配置 <群号> 目录 /挂载/QQ群文件/123456',
   '- #群同步配置 <群号> 平铺 开|关',
+  '- #群同步配置 <群号> uploadBackup on|off（监听群文件上传自动备份）',
   '- #群同步配置 <群号> 并发 <n>（下载/上传并发）',
   '- #群同步配置 <群号> url并发 <n>（解析URL并发）',
   '- #群同步配置 <群号> 超时 <sec>（单文件超时）',
@@ -186,6 +190,7 @@ export const groupSyncConfig = karin.command(/^#?(群同步配置|同步群配�
     ['模式', 'mode'], ['策略', 'mode'], ['mode', 'mode'],
     ['目录', 'dir'], ['目标目录', 'dir'], ['dir', 'dir'], ['to', 'dir'],
     ['平铺', 'flat'], ['flat', 'flat'],
+    ['上传备份', 'uploadBackup'], ['uploadBackup', 'uploadBackup'], ['uploadbackup', 'uploadBackup'],
     ['并发', 'concurrency'], ['线程', 'concurrency'], ['concurrency', 'concurrency'], ['threads', 'concurrency'],
     ['url并发', 'urlConcurrency'], ['url线程', 'urlConcurrency'], ['urlconcurrency', 'urlConcurrency'],
     ['超时', 'timeout'], ['timeout', 'timeout'],
@@ -315,6 +320,20 @@ export const groupSyncConfig = karin.command(/^#?(群同步配置|同步群配�
       return next
     })
     await e.reply(`群 ${groupId} 平铺上传已设置为：${bool ? '开' : '关'}`)
+    return true
+  }
+
+  if (action === 'uploadBackup') {
+    const bool = parseBoolean(rest[0])
+    if (typeof bool === 'undefined') {
+      await e.reply('uploadBackup 参数错误，请使用：on/off 或 开/关 或 true/false')
+      return true
+    }
+    updateConfigFile((next) => {
+      next.groupSyncTargets = upsertTarget(next, groupId!, { uploadBackup: bool })
+      return next
+    })
+    await e.reply(`群 ${groupId} uploadBackup 已设置为：${bool ? 'on' : 'off'}`)
     return true
   }
 

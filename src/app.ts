@@ -26,7 +26,7 @@ const parseDotEnv = (content: string): Record<string, string> => {
   return out
 }
 
-const ensureRootNpmConfigStub = () => {
+const ensureRootNpmConfigStub = (options?: { includeSrc?: boolean }) => {
   const pkgPath = path.join(process.cwd(), 'package.json')
   if (!fs.existsSync(pkgPath)) return
 
@@ -41,7 +41,11 @@ const ensureRootNpmConfigStub = () => {
 
   fs.copyFileSync(pkgPath, path.join(stubDir, 'package.json'))
 
-  for (const dirName of ['lib', 'config'] as const) {
+  for (const dirName of [
+    'lib',
+    'config',
+    ...(options?.includeSrc ? (['src'] as const) : []),
+  ] as const) {
     const src = path.join(process.cwd(), dirName)
     if (!fs.existsSync(src)) continue
     fs.cpSync(src, path.join(stubDir, dirName), { recursive: true, force: true })
@@ -52,9 +56,8 @@ try {
   const envFile = process.env.EBV_FILE || '.env'
   const envPath = path.resolve(process.cwd(), envFile)
   const env = fs.existsSync(envPath) ? parseDotEnv(fs.readFileSync(envPath, 'utf8')) : {}
-  if ((env.NODE_ENV || '').trim() !== 'development') {
-    ensureRootNpmConfigStub()
-  }
+  const isDev = (env.NODE_ENV || '').trim() === 'development'
+  ensureRootNpmConfigStub({ includeSrc: isDev })
 } catch {
   // ignore
 }
