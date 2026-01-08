@@ -7,52 +7,77 @@
   <title>{{name}} 帮助</title>
   <style>
     :root {
-      --bg: #ffffff;
-      --fg: #0f0f0f;
-      --muted: #666666;
-      --line: #0f0f0f;
-      --soft: #f3f3f3;
+      --w: 540px;
+      --h: 960px;
+      --bg: #0b1020;
+      --fg: #0b1220;
+      --muted: #64748b;
+      --card: rgba(255, 255, 255, 0.92);
+      --stroke: rgba(15, 23, 42, 0.12);
+      --soft: rgba(15, 23, 42, 0.05);
     }
 
     * {
       box-sizing: border-box;
     }
 
+    html,
     body {
-      width: 900px;
-      height: 720px;
+      width: var(--w);
+      height: var(--h);
       margin: 0;
       padding: 0;
-      background: var(--bg);
+      background:
+        radial-gradient(680px 680px at 12% 12%, rgba(99, 102, 241, 0.18), transparent 56%),
+        radial-gradient(720px 720px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 54%),
+        radial-gradient(720px 720px at 78% 96%, rgba(34, 197, 94, 0.10), transparent 56%),
+        linear-gradient(140deg, #f8fafc, #eef2ff 38%, #f1f5f9);
       color: var(--fg);
       font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-      position: relative;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
     }
 
     .wrap {
-      padding: 40px 44px;
+      width: 100%;
+      height: 100%;
+      padding: 22px 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
     }
 
     .header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 16px;
-      padding-bottom: 18px;
-      border-bottom: 3px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 18px 18px 16px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 14px 30px rgba(2, 6, 23, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
     }
 
     .title {
-      font-size: 30px;
-      font-weight: 800;
-      letter-spacing: 0.3px;
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
       line-height: 1.1;
     }
 
-    .meta {
-      text-align: right;
+    .subtitle {
+      margin-top: 6px;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .meta {
+      text-align: left;
+      color: var(--muted);
+      font-size: 13px;
       line-height: 1.6;
     }
 
@@ -60,95 +85,123 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     }
 
-    .section {
-      margin-top: 22px;
-      padding: 18px;
-      background: var(--soft);
-      border: 2px solid var(--line);
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid var(--stroke);
+      background: rgba(15, 23, 42, 0.04);
+      color: #0b1220;
+      border-radius: 999px;
+      font-weight: 700;
     }
 
-    .section-title {
-      font-weight: 800;
-      font-size: 14px;
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .card {
+      padding: 16px 18px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 12px 26px rgba(2, 6, 23, 0.07),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 16px;
       margin: 0 0 12px 0;
     }
 
-    .cmd {
-      display: flex;
-      gap: 14px;
-      padding: 10px 0;
-      border-top: 1px solid rgba(15, 15, 15, 0.15);
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
     }
 
-    .cmd:first-of-type {
-      border-top: none;
-      padding-top: 0;
+    .cmds {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .cmd {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      padding: 12px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: var(--soft);
     }
 
     .cmd-key {
-      width: 190px;
-      flex: 0 0 auto;
-      font-weight: 800;
-      font-size: 13px;
+      font-weight: 900;
+      font-size: 16px;
       white-space: nowrap;
     }
 
     .cmd-desc {
-      flex: 1 1 auto;
-      color: #1c1c1c;
-      font-size: 13px;
-      line-height: 1.55;
+      color: #0b1220;
+      font-size: 15px;
+      line-height: 1.5;
     }
 
     .tips {
-      margin-top: 16px;
+      margin: 0;
       padding: 0;
       list-style: none;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.7;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
 
-    .tips li {
+    .tip {
       display: flex;
       gap: 10px;
-      padding: 6px 0;
-      border-top: 1px dashed rgba(15, 15, 15, 0.25);
-    }
-
-    .tips li:first-child {
-      border-top: none;
-      padding-top: 0;
+      align-items: flex-start;
+      color: #334155;
+      font-size: 14px;
+      line-height: 1.45;
     }
 
     .dot {
       width: 10px;
       height: 10px;
-      border: 2px solid var(--line);
-      margin-top: 4px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.72);
+      margin-top: 6px;
       flex: 0 0 auto;
     }
 
     .footer {
-      position: absolute;
-      left: 44px;
-      right: 44px;
-      bottom: 26px;
+      margin-top: auto;
       display: flex;
       justify-content: space-between;
+      align-items: center;
       gap: 12px;
       color: var(--muted);
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: 0.2px;
+      padding: 0 4px;
     }
 
-    .badge {
-      display: inline-block;
-      padding: 4px 8px;
-      border: 1px solid rgba(15, 15, 15, 0.35);
-      background: #fff;
-      color: #111;
+    .footer .mono {
+      padding: 6px 10px;
       border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -158,46 +211,52 @@
     <div class="header">
       <div>
         <div class="title">群文件同步 · 帮助</div>
-        <div class="meta">插件：<span class="mono">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
+        <div class="subtitle">竖版指令卡（更适合手机阅读）</div>
       </div>
       <div class="meta">
-        <div>黑白模式 · 简洁指令卡</div>
+        <div>插件：<span class="mono">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
         <div>{{generatedAt}}</div>
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-title">常用命令</div>
+    <div class="content">
+      <div class="card">
+        <div class="card-title">常用命令 <span class="hint">建议私聊触发</span></div>
+        <div class="cmds">
+          <div class="cmd">
+            <div class="cmd-key mono">#同步群文件</div>
+            <div class="cmd-desc">把群文件同步到 OpenList（默认增量）。群内建议管理员/群主使用。</div>
+          </div>
+          <div class="cmd">
+            <div class="cmd-key mono">#导出群文件</div>
+            <div class="cmd-desc">导出群文件列表（可用于排查缺失/重复）。</div>
+          </div>
+          <div class="cmd">
+            <div class="cmd-key mono">#群同步配置</div>
+            <div class="cmd-desc">查看/设置当前群的同步目标目录、模式等参数。</div>
+          </div>
+          <div class="cmd">
+            <div class="cmd-key mono">#群文件帮助</div>
+            <div class="cmd-desc">发送本帮助图片。</div>
+          </div>
+        </div>
+      </div>
 
-      <div class="cmd">
-        <div class="cmd-key mono">#同步群文件</div>
-        <div class="cmd-desc">把群文件同步到 OpenList（默认增量）。群内建议管理员/群主使用。</div>
+      <div class="card">
+        <div class="card-title">快捷提示 <span class="hint">常用参数一眼懂</span></div>
+        <ul class="tips">
+          <li class="tip"><span class="dot"></span><span>试试：<span class="mono">#同步群文件 --help</span> 查看参数说明。</span></li>
+          <li class="tip"><span class="dot"></span><span>全量同步：<span class="mono">#同步群文件 --mode=full</span>（文件多时更慢）。</span></li>
+          <li class="tip"><span class="dot"></span><span>自定义目标目录：<span class="mono">#同步群文件 --to=/qq/群号</span></span></li>
+          <li class="tip"><span class="dot"></span><span>只想先验证连通性：先少量同步或先跑导出。</span></li>
+        </ul>
       </div>
-      <div class="cmd">
-        <div class="cmd-key mono">#导出群文件</div>
-        <div class="cmd-desc">导出群文件列表（可用于排查缺失/重复）。</div>
-      </div>
-      <div class="cmd">
-        <div class="cmd-key mono">#群同步配置</div>
-        <div class="cmd-desc">查看/设置当前群的同步目标目录、模式等参数。</div>
-      </div>
-      <div class="cmd">
-        <div class="cmd-key mono">#群文件帮助</div>
-        <div class="cmd-desc">发送本帮助图片。</div>
-      </div>
-
-      <ul class="tips">
-        <li><span class="dot"></span><span>试试：<span class="mono">#同步群文件 --help</span> 查看参数说明。</span></li>
-        <li><span class="dot"></span><span>全量同步：<span class="mono">#同步群文件 --mode=full</span>（文件多时更慢）。</span></li>
-        <li><span class="dot"></span><span>自定义目标目录：<span class="mono">#同步群文件 --to=/qq/群号</span></span></li>
-        <li><span class="dot"></span><span>只想先验证连通性：先少量同步或先跑导出。</span></li>
-      </ul>
     </div>
-  </div>
 
-  <div class="footer">
-    <div>提示：此图由前端模板渲染生成</div>
-    <div class="mono">#群文件帮助</div>
+    <div class="footer">
+      <div>提示：此图由前端模板渲染生成（竖版输出 1080×1920）</div>
+      <div class="mono">#群文件帮助</div>
+    </div>
   </div>
 </body>
 

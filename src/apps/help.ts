@@ -40,8 +40,9 @@ export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮�
         generatedAt: formatDateTime(new Date()),
       },
       setViewport: {
-        width: 900,
-        height: 720,
+        /** 竖版输出 1080x1920（通过 2x DPR 达到更清晰的字体/边缘） */
+        width: 540,
+        height: 960,
         deviceScaleFactor: 2,
       },
       pageGotoParams: {
