@@ -11,9 +11,6 @@ importers:
       '@karinjs/plugin-puppeteer':
         specifier: ^1.1.2
         version: 1.1.2
-      karin-plugin-ffmpegrender:
-        specifier: ^0.0.3
-        version: 0.0.3
     devDependencies:
       '@types/express':
         specifier: ^5.0.1
@@ -1164,9 +1161,6 @@ packages:
   jsx-ast-utils@3.3.5:
     resolution: {integrity: sha512-ZZow9HBI5O6EPgSJLUb8n2NKgmVWTwCvHGwFuJlMjvLFqlGG6pjirPhtdsseaLZjSibD8eegzmYpUZwoIlj2cQ==}
     engines: {node: '>=4.0'}
-
-  karin-plugin-ffmpegrender@0.0.3:
-    resolution: {integrity: sha512-AZaOm73EeRnCF5h15hmEigrHVUU3JRLWC2cbX0pruiheX5fDcQcpSy1G2LMjebit6+CO6Ue87++lg/6ltKhegQ==}
 
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
@@ -2813,10 +2807,6 @@ snapshots:
       array.prototype.flat: 1.3.3
       object.assign: 4.1.7
       object.values: 1.2.1
-
-  karin-plugin-ffmpegrender@0.0.3:
-    dependencies:
-      '@karinjs/plugin-puppeteer': 1.1.2
 
   keyv@4.5.4:
     dependencies:

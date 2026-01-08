@@ -62,7 +62,6 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@karinjs/plugin-puppeteer": "^1.1.2",
-    "karin-plugin-ffmpegrender": "^0.0.3"
+    "@karinjs/plugin-puppeteer": "^1.1.2"
   }
 }
