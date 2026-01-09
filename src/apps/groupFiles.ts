@@ -2788,13 +2788,69 @@ export const groupFileUploadedAutoBackup = karin.accept('notice.groupFileUploade
         throw new Error('通过接口获取下载URL失败')
       }
 
-      const remotePath = buildRemotePathForItem(item, targetDir, flat)
-      const remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
+      const baseRemotePath = buildRemotePathForItem(item, targetDir, flat)
+      let remotePath = baseRemotePath
+      let remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
+
+      const parseFileNameForVersioning = (fileName: string) => {
+        const raw = String(fileName ?? '').trim()
+        const dot = raw.lastIndexOf('.')
+        const hasExt = dot > 0 && dot < raw.length - 1
+        const namePart = hasExt ? raw.slice(0, dot) : raw
+        const ext = hasExt ? raw.slice(dot) : ''
+
+        const match = namePart.match(/^(.*)_v(\d+)$/i)
+        const base = (match?.[1] ? match[1] : namePart) || namePart || 'file'
+        const start = match?.[2] ? Math.max(1, Math.floor(Number(match[2])) + 1) : 1
+        return { base, ext, start }
+      }
+
+      const isTargetAlreadyExistsError = (error: unknown) => {
+        const msg = formatErrorMessage(error)
+        return /\b409\b/.test(msg)
+          || /already exists|file exists|EEXIST|object already exists/i.test(msg)
+          || /已存在|存在同名|文件已存在|同名文件/i.test(msg)
+          || /code=409\b/i.test(msg)
+      }
+
+      const versioning = (() => {
+        const dirPath = normalizePosixPath(path.posix.dirname(baseRemotePath))
+        const baseName = path.posix.basename(baseRemotePath)
+        const parsed = parseFileNameForVersioning(baseName)
+        let current = parsed.start
+        const max = parsed.start + 30 - 1
+        const used = new Set<string>([baseRemotePath])
+
+        const next = () => {
+          while (current <= max) {
+            const suffix = `_v${current}`
+            current++
+            const candidateName = safePathSegment(`${parsed.base}${suffix}${parsed.ext}`)
+            const candidatePath = normalizePosixPath(path.posix.join(dirPath, candidateName))
+            if (used.has(candidatePath)) continue
+            used.add(candidatePath)
+            return candidatePath
+          }
+        }
+
+        return { next }
+      })()
 
       const state = readGroupSyncState(groupId)
-      if (state.files?.[remotePath]?.fileId && String(state.files[remotePath].fileId) === fid) {
-        logger.info(`[群上传备份][${groupId}] 已备份，跳过: ${name} (${fid})`)
-        return
+
+      const pickNextRemotePath = () => {
+        let nextPath = versioning.next()
+        while (nextPath && state.files?.[nextPath]?.fileId) nextPath = versioning.next()
+        return nextPath
+      }
+
+      // 如果目标路径已存在（历史已备份），自动创建版本文件名，避免覆盖 / 目标端拒绝同名。
+      if (state.files?.[remotePath]?.fileId) {
+        const nextPath = pickNextRemotePath()
+        if (!nextPath) throw new Error(`目标端已存在同名文件，且自动改名（_v1..）仍失败：${remotePath}`)
+        logger.info(`[群上传备份][${groupId}] 目标已存在，改名重试: ${remotePath} -> ${nextPath}`)
+        remotePath = nextPath
+        remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
       }
 
       const auth = buildOpenListAuthHeader(username, password)
@@ -2828,7 +2884,6 @@ export const groupFileUploadedAutoBackup = karin.accept('notice.groupFileUploade
       const transferTimeoutMs = safeFileTimeoutSec * 1000
       const webdavTimeoutMs = 15_000
       const dirEnsurer = createWebDavDirEnsurer(davBaseUrl, auth, webdavTimeoutMs)
-      const targetUrl = `${davBaseUrl}${encodePathForUrl(remotePath)}`
 
       logger.info(`[群上传备份][${groupId}] 开始: ${name} (${fid}) -> ${remotePath}`)
 
@@ -2840,13 +2895,41 @@ export const groupFileUploadedAutoBackup = karin.accept('notice.groupFileUploade
 
           const url = await resolveUrl()
 
-          await downloadAndUploadByWebDav({
-            sourceUrl: url,
-            targetUrl,
-            auth,
-            timeoutMs: transferTimeoutMs,
-            rateLimitBytesPerSec: effectiveRateLimitBytesPerSec || undefined,
-          })
+          while (true) {
+            // 如果候选目标路径在 state 中已存在，继续递增版本号，确保写入新文件。
+            while (state.files?.[remotePath]?.fileId) {
+              const nextPath = pickNextRemotePath()
+              if (!nextPath) throw new Error(`目标端已存在同名文件，且自动改名（_v1..）仍失败：${remotePath}`)
+              logger.info(`[群上传备份][${groupId}] 目标已存在，改名重试: ${remotePath} -> ${nextPath}`)
+              remotePath = nextPath
+              remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
+            }
+
+            const targetUrl = `${davBaseUrl}${encodePathForUrl(remotePath)}`
+
+            try {
+              await downloadAndUploadByWebDav({
+                sourceUrl: url,
+                targetUrl,
+                auth,
+                timeoutMs: transferTimeoutMs,
+                rateLimitBytesPerSec: effectiveRateLimitBytesPerSec || undefined,
+              })
+              break
+            } catch (error) {
+              if (!isTargetAlreadyExistsError(error)) throw error
+
+              const nextPath = versioning.next()
+              if (!nextPath) {
+                throw new Error(`目标端已存在同名文件，且自动改名（_v1..）仍失败：${remotePath}`)
+              }
+
+              logger.info(`[群上传备份][${groupId}] 目标已存在，改名重试: ${remotePath} -> ${nextPath}`)
+              remotePath = nextPath
+              remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
+              continue
+            }
+          }
 
           state.files[remotePath] = {
             fileId: fid,
