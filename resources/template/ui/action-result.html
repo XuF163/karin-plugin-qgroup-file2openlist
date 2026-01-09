@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <style>
+    :root {
+      --w: 540px;
+      --card: rgba(255, 255, 255, 0.92);
+      --soft: rgba(15, 23, 42, 0.06);
+      --stroke: rgba(15, 23, 42, 0.12);
+      --text: #0b1220;
+      --muted: #64748b;
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    html,
+    body {
+      width: var(--w);
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(700px 700px at 0% 8%, rgba(59, 130, 246, 0.20), transparent 55%),
+        radial-gradient(700px 700px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 52%),
+        radial-gradient(700px 700px at 70% 96%, rgba(34, 197, 94, 0.10), transparent 56%),
+        linear-gradient(150deg, #f8fafc, #eef2ff 38%, #f1f5f9);
+    }
+
+    .wrap {
+      width: 100%;
+      padding: 22px 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .header {
+      padding: 18px 18px 14px;
+      border-radius: 18px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      box-shadow:
+        0 14px 30px rgba(2, 6, 23, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      white-space: nowrap;
+    }
+
+    .pill.ok {
+      color: #14532d;
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.25);
+    }
+
+    .pill.warn {
+      color: #7c2d12;
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(245, 158, 11, 0.30);
+    }
+
+    .pill.bad {
+      color: #7f1d1d;
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+
+    .card {
+      padding: 16px 16px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 12px 26px rgba(2, 6, 23, 0.07),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 16px;
+      margin: 0 0 12px 0;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 8px 10px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .kv .k {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .kv .v {
+      color: #0b1220;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .line {
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: var(--soft);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.35;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 4px;
+    }
+
+    .footer .mono {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-weight: 800;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="title">
+        <span>{{title}}</span>
+        {{if status}}
+        <span class="pill {{status}}">{{statusText || status}}</span>
+        {{/if}}
+      </div>
+      <div class="subtitle">
+        {{if subtitle}}{{subtitle}}{{else}}主人私聊 · 图片结果卡{{/if}}
+        {{if generatedAt}} · <span class="mono">{{generatedAt}}</span>{{/if}}
+      </div>
+    </div>
+
+    {{if sections && sections.length}}
+    {{each sections sec}}
+    <div class="card">
+      <div class="card-title">{{sec.title}}<span class="hint">{{sec.hint || ''}}</span></div>
+      {{if sec.rows && sec.rows.length}}
+      <div class="kv">
+        {{each sec.rows row}}
+        <div class="k">{{row.k}}</div>
+        <div class="v {{row.mono ? 'mono' : ''}}">{{row.v}}</div>
+        {{/each}}
+      </div>
+      {{/if}}
+      {{if sec.lines && sec.lines.length}}
+      <div class="list">
+        {{each sec.lines line}}
+        <div class="line {{line.mono ? 'mono' : ''}}">{{line.text}}</div>
+        {{/each}}
+      </div>
+      {{/if}}
+    </div>
+    {{/each}}
+    {{/if}}
+
+    <div class="footer">
+      <div>{{footerLeft || '提示：仅主人私聊可用'}}</div>
+      <div class="mono">{{footerRight || '#群文件面板'}}</div>
+    </div>
+  </div>
+</body>
+
+</html>
+

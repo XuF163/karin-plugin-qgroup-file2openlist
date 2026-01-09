@@ -142,6 +142,9 @@ data/
 # Local workspace / vendor directory (do not publish)
 @karinjs/
 
+# Temporary workspace (do not publish)
+tmp/
+
 # OS / editor junk
 .DS_Store
 Thumbs.db
