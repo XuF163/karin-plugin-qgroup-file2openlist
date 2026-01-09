@@ -5,7 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { dir } from '@/dir'
 import { config, time } from '@/utils'
-import { karin, logger, hooks } from 'node-karin'
+import { karin, logger } from 'node-karin'
 
 type SyncMode = 'full' | 'incremental'
 type OpenListBackupTransport = 'auto' | 'webdav' | 'api'
@@ -257,18 +257,26 @@ const getGroupFileListCompat = async (bot: any, groupId: string, folderId?: stri
   if (Number.isFinite(groupNum)) {
     const onebot = bot?._onebot
     if (!folderId && typeof onebot?.getGroupRootFiles === 'function') {
-      const res = await onebot.getGroupRootFiles(groupNum)
-      return {
-        files: Array.isArray(res?.files) ? res.files : [],
-        folders: Array.isArray(res?.folders) ? res.folders : [],
+      try {
+        const res = await onebot.getGroupRootFiles(groupNum)
+        return {
+          files: Array.isArray(res?.files) ? res.files : [],
+          folders: Array.isArray(res?.folders) ? res.folders : [],
+        }
+      } catch (error) {
+        logger.debug(`[群文件导出] onebot.getGroupRootFiles 调用失败，将尝试其它接口: ${formatErrorMessage(error)}`)
       }
     }
 
     if (folderId && typeof onebot?.getGroupFilesByFolder === 'function') {
-      const res = await onebot.getGroupFilesByFolder(groupNum, folderId)
-      return {
-        files: Array.isArray(res?.files) ? res.files : [],
-        folders: Array.isArray(res?.folders) ? res.folders : [],
+      try {
+        const res = await onebot.getGroupFilesByFolder(groupNum, folderId)
+        return {
+          files: Array.isArray(res?.files) ? res.files : [],
+          folders: Array.isArray(res?.folders) ? res.folders : [],
+        }
+      } catch (error) {
+        logger.debug(`[群文件导出] onebot.getGroupFilesByFolder 调用失败，将尝试其它接口: ${formatErrorMessage(error)}`)
       }
     }
   }
@@ -1121,6 +1129,144 @@ const collectAllGroupFiles = async (bot: any, groupId: string, startFolderId?: s
   return files
 }
 
+const normalizeGroupFileRelativePath = (input: string) => {
+  return String(input ?? '')
+    .replaceAll('\0', '')
+    .replaceAll('\\', '/')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+}
+
+const locateGroupFileById = async (
+  bot: any,
+  groupId: string,
+  fileId: string,
+  options?: { timeoutMs?: number, maxFolders?: number, expectedName?: string, expectedSize?: number },
+) => {
+  const timeoutMs = Math.max(1000, Math.floor(options?.timeoutMs ?? 12_000))
+  const maxFolders = Math.max(1, Math.floor(options?.maxFolders ?? 2000))
+  const expectedName = String(options?.expectedName ?? '').trim()
+  const expectedSize = typeof options?.expectedSize === 'number' && Number.isFinite(options.expectedSize)
+    ? Math.max(0, Math.floor(options.expectedSize))
+    : undefined
+
+  const start = Date.now()
+  const visited = new Set<string>()
+  const queued = new Set<string>()
+  const stack: Array<{ folderId?: string, prefix: string }> = [{ folderId: undefined, prefix: '' }]
+  let scanned = 0
+
+  let bestCandidate: { path: string, name: string, busid?: number, uploadTime?: number } | undefined
+
+  while (stack.length) {
+    if (Date.now() - start > timeoutMs) return bestCandidate
+    if (scanned >= maxFolders) return bestCandidate
+
+    const current = stack.pop()!
+    const folderId = current.folderId
+    const prefix = current.prefix
+
+    if (folderId) {
+      if (visited.has(folderId)) continue
+      visited.add(folderId)
+    }
+
+    scanned++
+    const { files: rawFiles, folders: rawFolders } = await getGroupFileListCompat(bot, groupId, folderId)
+
+    for (const raw of rawFiles) {
+      const id = pickFirstString(raw?.fid, raw?.file_id, raw?.fileId, raw?.id)
+      const uploadTime = pickFirstNumber(raw?.uploadTime, raw?.upload_time)
+      const size = pickFirstNumber(raw?.size, raw?.file_size, raw?.fileSize)
+      const busid = pickFirstNumber(raw?.busid, raw?.busId)
+
+      if (!id || String(id) !== String(fileId)) continue
+
+      const name = pickFirstString(raw?.name, raw?.file_name, raw?.fileName) ?? (id ? `file-${id}` : 'unknown-file')
+      const filePath = prefix ? `${prefix}/${name}` : name
+
+      return {
+        path: filePath,
+        name,
+        busid,
+      }
+    }
+
+    if (expectedName) {
+      for (const raw of rawFiles) {
+        const id = pickFirstString(raw?.fid, raw?.file_id, raw?.fileId, raw?.id)
+        if (!id) continue
+
+        const name = pickFirstString(raw?.name, raw?.file_name, raw?.fileName) ?? (id ? `file-${id}` : 'unknown-file')
+        if (String(name).trim() !== expectedName) continue
+
+        const size = pickFirstNumber(raw?.size, raw?.file_size, raw?.fileSize)
+        if (typeof expectedSize === 'number') {
+          if (typeof size !== 'number' || !Number.isFinite(size) || Math.floor(size) !== expectedSize) continue
+        }
+
+        const uploadTime = pickFirstNumber(raw?.uploadTime, raw?.upload_time)
+        const busid = pickFirstNumber(raw?.busid, raw?.busId)
+        const filePath = prefix ? `${prefix}/${name}` : name
+
+        if (!bestCandidate) {
+          bestCandidate = { path: filePath, name, busid, uploadTime }
+          continue
+        }
+
+        const bestTime = typeof bestCandidate.uploadTime === 'number' ? bestCandidate.uploadTime : -1
+        const currentTime = typeof uploadTime === 'number' ? uploadTime : -1
+        if (currentTime > bestTime) bestCandidate = { path: filePath, name, busid, uploadTime }
+      }
+    }
+
+    for (const raw of rawFolders) {
+      const id = pickFirstString(raw?.id, raw?.folder_id, raw?.folderId)
+      if (!id) continue
+      if (visited.has(id) || queued.has(id)) continue
+
+      queued.add(id)
+      const folderName = pickFirstString(raw?.name, raw?.folder_name, raw?.folderName) ?? id
+      const nextPrefix = prefix ? `${prefix}/${folderName}` : folderName
+      stack.push({ folderId: id, prefix: nextPrefix })
+    }
+  }
+
+  return bestCandidate
+}
+
+const locateGroupFileByIdWithRetry = async (
+  bot: any,
+  groupId: string,
+  fileId: string,
+  options?: {
+    retries?: number
+    delayMs?: number
+    timeoutMs?: number
+    maxFolders?: number
+    expectedName?: string
+    expectedSize?: number
+  },
+) => {
+  const retries = Math.max(0, Math.floor(options?.retries ?? 2))
+  const delayMs = Math.max(0, Math.floor(options?.delayMs ?? 800))
+
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const found = await locateGroupFileById(bot, groupId, fileId, options)
+      if (found?.path) return found
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < retries && delayMs > 0) await sleep(delayMs)
+  }
+
+  if (lastError) throw lastError
+}
+
 const writeExportFile = (format: 'json' | 'csv', outPath: string, payload: any, list: ExportedGroupFile[]) => {
   ensureDir(path.dirname(outPath))
 
@@ -1401,7 +1547,7 @@ export const exportGroupFiles = karin.command(/^#?(导出群文件|群文件导�
 const syncHelpText = [
   '群文件同步到 OpenList 用法：',
   '- 私聊：#同步群文件 <群号> [参数]',
-  '- 群聊：#同步群文件（默认同步本群；建议先在 WebUI 配置同步对象群）',
+  '- 注意：默认仅私聊响应（群聊不会触发该指令）',
   '- 示例：#同步群文件 123456',
   '- #同步群文件 123456 --to /目标目录：上传到指定目录（默认使用配置 openlistTargetDir）',
   '- #同步群文件 123456 --flat：不保留群文件夹结构，全部平铺到目标目录',
@@ -2519,6 +2665,8 @@ export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, a
 })
 
 const activeGroupFileUploadBackups = new Map<string, Promise<void>>()
+const uploadBackupSkipLoggedGroups = new Set<string>()
+const uploadBackupUrlFallbackLoggedGroups = new Set<string>()
 
 const enqueueGroupFileUploadBackup = (groupId: string, task: () => Promise<void>) => {
   const key = String(groupId)
@@ -2530,23 +2678,32 @@ const enqueueGroupFileUploadBackup = (groupId: string, task: () => Promise<void>
   })
 }
 
-hooks.eventCall.notice((event: any, _plugin: any, next) => {
+export const groupFileUploadedAutoBackup = karin.accept('notice.groupFileUploaded', (e, next) => {
   try {
-    if (!event || event.subEvent !== 'groupFileUploaded') return
-
-    const groupId = String(event.groupId ?? '')
+    const groupId = String((e as any)?.groupId ?? '').trim()
     if (!groupId) return
 
     const cfg = config()
     const targetCfg = getGroupSyncTarget(cfg, groupId)
-    if (!targetCfg || targetCfg.enabled === false || targetCfg.uploadBackup !== true) return
+    const uploadBackupEnabled = targetCfg?.uploadBackup === true
+      || ['true', '1', 'on'].includes(String((targetCfg as any)?.uploadBackup ?? '').trim().toLowerCase())
+    if (!targetCfg || targetCfg.enabled === false || !uploadBackupEnabled) {
+      if (!uploadBackupSkipLoggedGroups.has(groupId)) {
+        uploadBackupSkipLoggedGroups.add(groupId)
+        logger.info(`[群上传备份][${groupId}] uploadBackup 未启用或该群未配置，已跳过（可在 WebUI 开启 uploadBackup）`)
+      }
+      return
+    }
 
-    const file = event.content as any
+    const file = (e as any).content as any
     const fid = String(file?.fid ?? '').trim()
     const name = String(file?.name ?? '').trim()
     const size = typeof file?.size === 'number' && Number.isFinite(file.size) ? Math.max(0, Math.floor(file.size)) : undefined
     const getUrl = typeof file?.url === 'function' ? (file.url as () => Promise<string>) : null
-    if (!fid || !name || !getUrl) return
+    if (!fid || !name || !getUrl) {
+      logger.warn(`[群上传备份][${groupId}] 群文件上传事件缺少必要字段（fid/name/url），已跳过`)
+      return
+    }
 
     enqueueGroupFileUploadBackup(groupId, async () => {
       const baseUrl = String(cfg.openlistBaseUrl ?? '').trim()
@@ -2571,14 +2728,67 @@ hooks.eventCall.notice((event: any, _plugin: any, next) => {
         String(targetCfg?.targetDir ?? '').trim() || path.posix.join(String(defaultTargetDir || '/'), String(groupId)),
       )
 
+      const flat = typeof targetCfg?.flat === 'boolean'
+        ? targetCfg.flat
+        : Boolean(defaults?.flat ?? false)
+
       const item: ExportedGroupFile = {
         path: name,
         fileId: fid,
         name,
         size,
+        busid: typeof file?.subId === 'number' && Number.isFinite(file.subId) ? Math.floor(file.subId) : undefined,
       }
 
-      const remotePath = buildRemotePathForItem(item, targetDir, true)
+      if (!flat) {
+        const direct = pickFirstString(file?.path, file?.filePath, file?.file_path, file?.fullPath, file?.full_path)
+        const normalized = direct ? normalizeGroupFileRelativePath(direct) : ''
+        if (normalized) item.path = normalized
+
+        const bot = (e as any)?.bot
+        if (bot && !item.path.includes('/')) {
+          try {
+            const found = await locateGroupFileByIdWithRetry(bot, groupId, fid, {
+              retries: 3,
+              delayMs: 1200,
+              timeoutMs: 15_000,
+              maxFolders: 4000,
+              expectedName: name,
+              expectedSize: size,
+            })
+            if (found?.path) item.path = found.path
+            if (typeof found?.busid === 'number' && Number.isFinite(found.busid)) item.busid = Math.floor(found.busid)
+            if (!found?.path) {
+              logger.warn(`[群上传备份][${groupId}] 未能解析群文件夹路径，可能协议端未提供目录信息或文件尚未入库，将备份到群根目录：${name}`)
+            }
+          } catch (error) {
+            logger.debug(`[群上传备份][${groupId}] 获取群内文件路径失败，将退化为根目录: ${formatErrorMessage(error)}`)
+          }
+        }
+      }
+
+      const resolveUrl = async () => {
+        try {
+          const url = await getUrl()
+          if (typeof url === 'string' && url.trim()) return url.trim()
+        } catch {}
+
+        const bot = (e as any)?.bot
+        const contact = (e as any)?.contact
+        if (!bot) throw new Error('事件对象缺少 bot，无法通过接口获取下载URL')
+
+        const url = await resolveGroupFileUrl(bot, contact, groupId, item)
+        if (typeof url === 'string' && url.trim()) {
+          if (!uploadBackupUrlFallbackLoggedGroups.has(groupId)) {
+            uploadBackupUrlFallbackLoggedGroups.add(groupId)
+            logger.debug(`[群上传备份][${groupId}] file.url() 不可用，已自动使用接口获取下载URL（该提示仅出现一次）`)
+          }
+          return url.trim()
+        }
+        throw new Error('通过接口获取下载URL失败')
+      }
+
+      const remotePath = buildRemotePathForItem(item, targetDir, flat)
       const remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
 
       const state = readGroupSyncState(groupId)
@@ -2628,8 +2838,7 @@ hooks.eventCall.notice((event: any, _plugin: any, next) => {
         try {
           await dirEnsurer.ensureDir(remoteDir)
 
-          const url = await getUrl()
-          if (!url) throw new Error('获取文件URL失败')
+          const url = await resolveUrl()
 
           await downloadAndUploadByWebDav({
             sourceUrl: url,
@@ -2670,4 +2879,4 @@ hooks.eventCall.notice((event: any, _plugin: any, next) => {
   } finally {
     next()
   }
-})
+}, { log: false, name: '群文件上传自动备份' })
