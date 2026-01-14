@@ -4,7 +4,7 @@ import { readJsonSafe, writeJsonSafe } from '@/model/shared/fsJson'
 import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
 import type { OpltDataV1, OpltNightly, OpltUserData } from './types'
 
-export const DEFAULT_OPLT_NIGHTLY_CRON = '0 0 3 * * *'
+export const DEFAULT_OPLT_NIGHTLY_CRON = '0 0 2 * * *'
 export const DEFAULT_OPLT_NIGHTLY_MODE: SyncMode = 'incremental'
 export const DEFAULT_OPLT_NIGHTLY_TRANSPORT: OpenListBackupTransport = 'auto'
 export const DEFAULT_OPLT_NIGHTLY_APPEND_HOST_DIR = false

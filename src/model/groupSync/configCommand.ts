@@ -119,17 +119,15 @@ const cfgHelp = [
   '- #群同步配置 <群号> 添加',
   '- #群同步配置 <群号> 删除',
   '- #群同步配置 <群号> 启用 / 停用',
-  '- #群同步配置 <群号> 模式 全量|增量',
   '- #群同步配置 <群号> 目录 /挂载/QQ群文件/123456',
   '- #群同步配置 <群号> 平铺 开|关',
   '- #群同步配置 <群号> uploadBackup on|off（监听群文件上传自动备份）',
   '- #群同步配置 <群号> 并发 <n>（下载/上传并发）',
   '- #群同步配置 <群号> url并发 <n>（解析URL并发）',
-  '- #群同步配置 <群号> 超时 <sec>（单文件超时）',
   '- #群同步配置 <群号> 重试 <n>',
   '- #群同步配置 <群号> 时段 00:00-06:00,23:00-23:59（空=不限制）',
-  '- #群同步配置 <群号> 计划 <cron>（例：0 3 * * *）',
-  '- #群同步配置 <群号> 计划 开启|关闭',
+  '',
+  '提示：夜间自动备份已固定为：每天 02:00 触发（可在 config.scheduler.tickCron 调整）、先群后 oplts、统一增量、单文件超时 3000s；不再支持通过该命令配置。',
 ].join('\n')
 
 /**
@@ -261,16 +259,11 @@ export const handleGroupSyncConfigCommand = async (e: any) => {
   }
 
   if (action === 'mode') {
-    const mode = parseMode(rest[0])
-    if (!mode) {
-      await e.reply('模式参数错误，请使用：全量/增量 或 full/incremental')
-      return true
-    }
-    updateConfigFile((next) => {
-      next.groupSyncTargets = upsertTarget(next, groupId!, { mode })
-      return next
-    })
-    await e.reply(`群 ${groupId} 同步模式已设置为：${mode === 'full' ? '全量' : '增量'}`)
+    await e.reply([
+      '该项已由夜间自动备份策略固定：',
+      '- 模式：增量（incremental）',
+      '不再支持通过 #群同步配置 修改。',
+    ].join('\n'))
     return true
   }
 
@@ -336,17 +329,11 @@ export const handleGroupSyncConfigCommand = async (e: any) => {
   }
 
   if (action === 'timeout') {
-    const sec = parseIntSafe(rest[0])
-    if (!sec || sec <= 0) {
-      await e.reply('超时参数错误，请输入大于 0 的整数（秒）。')
-      return true
-    }
-    const capped = Math.min(3000, sec)
-    updateConfigFile((next) => {
-      next.groupSyncTargets = upsertTarget(next, groupId!, { fileTimeoutSec: capped })
-      return next
-    })
-    await e.reply(`群 ${groupId} 单文件超时已设置为：${capped}s${sec !== capped ? '（已按上限 3000s 截断）' : ''}`)
+    await e.reply([
+      '该项已由夜间自动备份策略固定：',
+      '- 单文件超时：3000s',
+      '不再支持通过 #群同步配置 修改。',
+    ].join('\n'))
     return true
   }
 
@@ -375,32 +362,12 @@ export const handleGroupSyncConfigCommand = async (e: any) => {
   }
 
   if (action === 'schedule') {
-    const value = rest.join(' ').trim()
-    const bool = parseBoolean(rest[0])
-    const cron = bool == null ? value : ''
-
-    if (!value) {
-      await e.reply('计划参数不能为空。')
-      return true
-    }
-
-    updateConfigFile((next) => {
-      const existing = getTargets(next).find(it => String(it.groupId) === String(groupId))
-      const base = existing ?? ensureTargetWithDefaults(groupId!, next)
-      const schedule = { ...(base.schedule ?? {} as any) }
-
-      if (typeof bool === 'boolean') {
-        schedule.enabled = bool
-      } else {
-        schedule.cron = cron
-        schedule.enabled = true
-      }
-
-      next.groupSyncTargets = upsertTarget(next, groupId!, { schedule })
-      return next
-    })
-
-    await e.reply(`群 ${groupId} 定时计划已更新：${value}`)
+    await e.reply([
+      '该项已由夜间自动备份统一调度器管理：',
+      '- 默认触发：每天 02:00（可在 config.scheduler.tickCron 调整）',
+      '- 先群后 oplts，统一增量，单文件超时 3000s',
+      '不再支持通过 #群同步配置 修改。',
+    ].join('\n'))
     return true
   }
 

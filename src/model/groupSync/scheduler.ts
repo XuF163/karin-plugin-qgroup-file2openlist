@@ -4,6 +4,9 @@ import { getAllBot, logger } from 'node-karin'
 import { syncGroupFilesToOpenListCore } from '@/model/groupFiles'
 import type { SyncMode } from '@/model/groupFiles/types'
 
+const NIGHTLY_MODE: SyncMode = 'incremental'
+const NIGHTLY_FILE_TIMEOUT_SEC = 3000
+
 const normalizeMode = (value: unknown, fallback: SyncMode): SyncMode => {
   const v = String(value ?? '').trim().toLowerCase()
   if (v === 'full' || v === '全量') return 'full'
@@ -210,12 +213,143 @@ const runScheduledSync = async (groupId: string) => {
   if (lastError) logger.error(lastError)
 }
 
+const uploadBackupEnabledForTarget = (target: any) => {
+  if (target?.uploadBackup === true) return true
+  return ['true', '1', 'on'].includes(String(target?.uploadBackup ?? '').trim().toLowerCase())
+}
+
+/**
+ * 夜间自动备份：按固定策略对“已开启 uploadBackup 的群”做一次增量同步。
+ * - 由 `src/apps/scheduler.ts` 定时触发（默认每天 02:00）
+ * - 固定：增量模式 + 单文件超时 3000s
+ */
+export const runNightlyGroupBackup = async () => {
+  const cfg = config()
+  if (cfg?.scheduler?.enabled === false) return
+  if (cfg?.scheduler?.groupSync?.enabled === false) return
+
+  const defaults = cfg.groupSyncDefaults ?? {}
+  const targets = Array.isArray(cfg.groupSyncTargets) ? cfg.groupSyncTargets : []
+  const now = new Date()
+
+  const nightlyTargets = targets.filter((t: any) => {
+    const groupId = String(t?.groupId ?? '').trim()
+    if (!groupId) return false
+    if (t?.enabled === false) return false
+    return uploadBackupEnabledForTarget(t)
+  })
+
+  if (!nightlyTargets.length) return
+
+  logger.info(`[夜间备份][群] 开始：${nightlyTargets.length} 个群（模式=${NIGHTLY_MODE} 超时=${NIGHTLY_FILE_TIMEOUT_SEC}s）`)
+
+  for (const target of nightlyTargets) {
+    const groupId = String((target as any)?.groupId ?? '').trim()
+    if (!groupId) continue
+
+    if (!isNowAllowed((target as any)?.timeWindows, now)) {
+      logger.info(`[夜间备份][群][${groupId}] 不在时段内，跳过`)
+      continue
+    }
+
+    const folderId = String((target as any)?.sourceFolderId ?? '').trim() ? String((target as any).sourceFolderId) : undefined
+    const maxFiles = typeof (target as any)?.maxFiles === 'number' ? (target as any).maxFiles : undefined
+
+    const urlConcurrency = typeof (target as any)?.urlConcurrency === 'number'
+      ? (target as any).urlConcurrency
+      : (typeof defaults?.urlConcurrency === 'number' ? defaults.urlConcurrency : 3)
+
+    const transferConcurrency = typeof (target as any)?.transferConcurrency === 'number'
+      ? (target as any).transferConcurrency
+      : (typeof defaults?.transferConcurrency === 'number' ? defaults.transferConcurrency : 3)
+
+    const retryTimes = typeof (target as any)?.retryTimes === 'number'
+      ? (target as any).retryTimes
+      : (typeof defaults?.retryTimes === 'number' ? defaults.retryTimes : 2)
+
+    const retryDelayMs = typeof (target as any)?.retryDelayMs === 'number'
+      ? (target as any).retryDelayMs
+      : (typeof defaults?.retryDelayMs === 'number' ? defaults.retryDelayMs : 1500)
+
+    const progressReportEvery = typeof (target as any)?.progressReportEvery === 'number'
+      ? (target as any).progressReportEvery
+      : (typeof defaults?.progressReportEvery === 'number' ? defaults.progressReportEvery : 10)
+
+    const downloadLimitKbps = typeof (target as any)?.downloadLimitKbps === 'number'
+      ? (target as any).downloadLimitKbps
+      : (typeof defaults?.downloadLimitKbps === 'number' ? defaults.downloadLimitKbps : 0)
+
+    const uploadLimitKbps = typeof (target as any)?.uploadLimitKbps === 'number'
+      ? (target as any).uploadLimitKbps
+      : (typeof defaults?.uploadLimitKbps === 'number' ? defaults.uploadLimitKbps : 0)
+
+    const flat = typeof (target as any)?.flat === 'boolean' ? (target as any).flat : Boolean(defaults?.flat ?? false)
+
+    const targetDir = String((target as any)?.targetDir ?? '').trim()
+      ? String((target as any).targetDir)
+      : path.posix.join(String(cfg.openlistTargetDir ?? '/'), groupId)
+
+    const bots = getAllBot()
+    if (!bots.length) {
+      logger.warn(`[夜间备份][群][${groupId}] 未找到可用Bot，跳过`)
+      continue
+    }
+
+    logger.info(`[夜间备份][群][${groupId}] 开始同步`)
+
+    let lastError: unknown
+    for (const bot of bots) {
+      try {
+        await syncGroupFilesToOpenListCore({
+          bot,
+          groupId,
+          folderId,
+          maxFiles,
+          flat,
+          targetDir,
+          mode: NIGHTLY_MODE,
+          urlConcurrency: Math.max(1, Math.floor(urlConcurrency) || 1),
+          transferConcurrency: Math.max(1, Math.floor(transferConcurrency) || 1),
+          fileTimeoutSec: NIGHTLY_FILE_TIMEOUT_SEC,
+          retryTimes: Math.max(0, Math.floor(retryTimes) || 0),
+          retryDelayMs: Math.max(0, Math.floor(retryDelayMs) || 0),
+          progressReportEvery: Math.max(0, Math.floor(progressReportEvery) || 0),
+          downloadLimitKbps: Math.max(0, Math.floor(downloadLimitKbps) || 0),
+          uploadLimitKbps: Math.max(0, Math.floor(uploadLimitKbps) || 0),
+          report: (msg) => logger.info(`[夜间备份][群][${groupId}] ${msg}`),
+        })
+        logger.info(`[夜间备份][群][${groupId}] 完成`)
+        lastError = undefined
+        break
+      } catch (error: any) {
+        const msg = error instanceof Error ? error.message : String(error)
+        if (msg.includes('正在进行中')) {
+          logger.info(`[夜间备份][群][${groupId}] 同步任务正在进行中，跳过`)
+          lastError = undefined
+          break
+        }
+        lastError = error
+        continue
+      }
+    }
+
+    if (lastError) {
+      logger.error(lastError)
+      logger.info(`[夜间备份][群][${groupId}] 失败（已记录日志），继续下一个群`)
+    }
+  }
+
+  logger.info('[夜间备份][群] 结束')
+}
+
 /**
  * 供 apps 层的 `karin.task` 调用：每秒检查一次各群的 schedule cron，并触发对应同步任务。
  * - 为避免同一秒内重复触发，对每个 (groupId, cron) 记录触发秒级时间戳。
  */
 export const runGroupFileSyncSchedulerTick = async () => {
   const cfg = config()
+  if (cfg?.scheduler?.enabled === false) return
+  if (cfg?.scheduler?.groupSync?.enabled === false) return
   const targets = Array.isArray(cfg.groupSyncTargets) ? cfg.groupSyncTargets : []
   const now = new Date()
   const stamp = Math.floor(now.getTime() / 1000)

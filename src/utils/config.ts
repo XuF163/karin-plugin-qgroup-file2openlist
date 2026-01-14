@@ -144,6 +144,21 @@ export interface Config {
     createdAt?: number
     updatedAt?: number
   }>
+
+  /**
+   * 定时任务统一调度配置（群文件定时同步 / oplts 夜间备份）
+   * - enabled=false：关闭所有定时任务触发（不影响手动命令/事件）
+   * - tickCron：调度器 cron（默认每天 02:00）
+   */
+  scheduler?: {
+    enabled?: boolean
+    /** 调度器 cron（建议 6 段：秒 分 时 日 月 周） */
+    tickCron?: string
+    /** 群文件夜间备份全局开关（对 uploadBackup=on 的群执行一次同步） */
+    groupSync?: { enabled?: boolean }
+    /** oplts 夜间自动备份全局开关（#oplt夜间 仅查看状态） */
+    opltNightly?: { enabled?: boolean }
+  }
 }
 
 /**

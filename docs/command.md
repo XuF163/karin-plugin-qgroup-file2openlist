@@ -11,14 +11,15 @@
   - B：目标目录（/path 或 URL，若是 URL 会自动提取 pathname）。
 - `#删除oplt <序号>`：删除一条 oplts（主人权限）。
 - `#oplt备份 <序号|全部> [参数]`：手动触发 oplts 备份（主人权限）。
-  - 参数：`--inc|--full`、`--auto|--api|--webdav`、`--host|--no-host`、`--user <u> --pass <p>`。
-- `#oplt夜间 查看|开启|关闭 [参数]`：夜间自动备份 oplts（主人权限）。
-  - 示例：`#oplt夜间 开启 0 0 3 * * * --inc --auto`
-  - 参数：`--inc|--full`、`--auto|--api|--webdav`、`--host|--no-host`。
+  - 固定策略：增量（incremental）+ 单文件超时 3000s（不再通过命令配置）。
+  - 可选参数：`--auto|--api|--webdav`、`--host|--no-host`、`--user <u> --pass <p>`。
+- `#oplt夜间 查看`：查看夜间自动备份状态（主人权限）。
+  - 说明：夜间自动备份默认开启，默认每天 02:00 触发（先群后 oplts），固定增量 + 单文件超时 3000s，不支持通过命令修改。
 
 - `#op帮助`：展开所有命令介绍（文本）。
 - `#群文件帮助`：帮助图（图片）。
 
 ## OpenList → OpenList（单次）
 
-- `#备份oplist https://pan.example.com --src / --to /backup --inc --auto`
+- `#备份oplist https://pan.example.com --src / --to /backup --auto`
+  - 固定策略：增量（incremental）+ 单文件超时 3000s（不再通过命令配置）。

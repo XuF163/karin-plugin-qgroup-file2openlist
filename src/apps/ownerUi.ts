@@ -114,7 +114,7 @@ export const ownerPanel = karin.command(/^#?群文件面板(?:\s+(\d+))?(\s+.*)?
           title: '常用命令',
           lines: [
             { text: '#群文件面板', mono: true },
-            { text: '#绑定备份群 123456 --to /目标目录 --inc', mono: true },
+            { text: '#绑定备份群 123456 --to /目标目录', mono: true },
             { text: '#解绑备份群 123456', mono: true },
             { text: '#开启群文件监听 123456', mono: true },
             { text: '#关闭群文件监听 123456', mono: true },
@@ -140,7 +140,7 @@ export const ownerPanel = karin.command(/^#?群文件面板(?:\s+(\d+))?(\s+.*)?
       const groupId = String(t?.groupId ?? '').trim()
       const enabled = t?.enabled !== false
       const uploadBackup = Boolean(t?.uploadBackup === true || ['true', '1', 'on'].includes(String(t?.uploadBackup ?? '').trim().toLowerCase()))
-      const mode: SyncMode = (t?.mode === 'incremental' || t?.mode === 'full') ? t.mode : pickMode('', 'incremental')
+      const mode: SyncMode = 'incremental'
       const targetDir = String(t?.targetDir ?? '').trim()
 
       const state = groupId ? readGroupSyncState(groupId) : undefined
@@ -180,7 +180,7 @@ export const ownerPanel = karin.command(/^#?群文件面板(?:\s+(\d+))?(\s+.*)?
     })
 
     const quickCommands = [
-      '#绑定备份群 123456 --to /目标目录 --inc',
+      '#绑定备份群 123456 --to /目标目录',
       '#解绑备份群 123456',
       '#开启群文件监听 123456',
       '#关闭群文件监听 123456',
@@ -224,7 +224,7 @@ export const ownerPanel = karin.command(/^#?群文件面板(?:\s+(\d+))?(\s+.*)?
 })
 
 /**
- * #绑定备份群 <groupId> [--to <dir>] [--inc|--full] [--flat|--keep]
+ * #绑定备份群 <groupId> [--to <dir>] [--flat|--keep]
  */
 export const bindGroup = karin.command(/^#?绑定备份群(.*)$/i, async (e) => {
   if (!e.isPrivate) return false
@@ -238,7 +238,7 @@ export const bindGroup = karin.command(/^#?绑定备份群(.*)$/i, async (e) => 
         {
           title: '用法',
           lines: [
-            { text: '#绑定备份群 <群号> [--to /目标目录] [--inc|--full] [--flat|--keep]', mono: true },
+            { text: '#绑定备份群 <群号> [--to /目标目录] [--flat|--keep]', mono: true },
             { text: '绑定后会自动开启群文件上传监听（uploadBackup=on）', mono: false },
           ],
         },
@@ -264,7 +264,7 @@ export const bindGroup = karin.command(/^#?绑定备份群(.*)$/i, async (e) => 
 
   const to = pickFlagValue(argsText, ['to'])
   const flat = pickFlag(argsText, ['flat']) ? true : pickFlag(argsText, ['keep']) ? false : undefined
-  const mode = pickMode(argsText, 'incremental')
+  const mode: SyncMode = 'incremental'
 
   try {
     const res = bindBackupGroup({
@@ -289,7 +289,7 @@ export const bindGroup = karin.command(/^#?绑定备份群(.*)$/i, async (e) => 
         {
           title: '生效策略',
           rows: [
-            { k: '模式', v: target?.mode ? modeLabel(target.mode) : modeLabel(mode), mono: false },
+            { k: '模式', v: modeLabel(mode), mono: false },
             { k: '目标目录', v: String(target?.targetDir ?? ''), mono: true },
             { k: '平铺', v: String(target?.flat ?? false), mono: true },
           ],
@@ -297,8 +297,7 @@ export const bindGroup = karin.command(/^#?绑定备份群(.*)$/i, async (e) => 
         {
           title: '快捷操作',
           lines: [
-            { text: `#同步群文件 ${groupId} --inc`, mono: true },
-            { text: `#同步群文件 ${groupId} --full`, mono: true },
+            { text: `#同步群文件 ${groupId}`, mono: true },
             { text: `#关闭群文件监听 ${groupId}`, mono: true },
             { text: `#解绑备份群 ${groupId}`, mono: true },
           ],
@@ -959,4 +958,3 @@ export const opForward = karin.command(/^#?op转发(.*)$/i, async (e) => {
   name: 'OP转发（主人）',
   permission: 'master',
 })
-

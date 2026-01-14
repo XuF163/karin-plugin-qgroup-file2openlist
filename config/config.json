@@ -9,7 +9,7 @@
     "flat": false,
     "urlConcurrency": 3,
     "transferConcurrency": 3,
-    "fileTimeoutSec": 600,
+    "fileTimeoutSec": 3000,
     "retryTimes": 2,
     "retryDelayMs": 1500,
     "progressReportEvery": 10,
@@ -17,5 +17,15 @@
     "uploadLimitKbps": 0
   },
   "groupSyncTargets": [],
-  "openlistForwardRules": []
+  "openlistForwardRules": [],
+  "scheduler": {
+    "enabled": true,
+    "tickCron": "0 0 2 * * *",
+    "groupSync": {
+      "enabled": true
+    },
+    "opltNightly": {
+      "enabled": true
+    }
+  }
 }

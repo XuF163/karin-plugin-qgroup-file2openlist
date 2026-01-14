@@ -88,7 +88,7 @@ src/
 
 ### Phase 4（已完成）：配置与调度整理
 
-- 把 `src/apps/groupSyncConfig.ts` / `src/apps/groupSyncScheduler.ts` 中的：
+- 把 `src/apps/groupSyncConfig.ts` / `src/apps/scheduler.ts` 中的：
   - `normalizePosixPath`、cron/timeWindow 解析等公共逻辑抽到 `src/model/groupSync/*`
 - 保持 apps 中只剩：注册 `karin.command`/`karin.task`，调用 model 的纯函数/服务函数。
 

@@ -4,6 +4,9 @@ import { handleGroupFileUploadedAutoBackup } from '@/model/groupFiles'
 import { formatErrorMessage } from '@/model/shared/errors'
 import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
 
+const FIXED_BACKUP_MODE: SyncMode = 'incremental'
+const FIXED_TIMEOUT_SEC = 3000
+
 const parseBackupOpenListArgs = (text: string) => {
   const raw = text.trim()
   const tokens = raw ? raw.split(/\s+/).filter(Boolean) : []
@@ -25,9 +28,6 @@ const parseBackupOpenListArgs = (text: string) => {
   const concurrencyMatch = restRaw.match(/--concurrency\s+(\d+)/i) ?? restRaw.match(/(^|\s)concurrency=(\d+)/i)
   const concurrency = concurrencyMatch ? Number(concurrencyMatch[concurrencyMatch.length - 1]) : undefined
 
-  const timeoutMatch = restRaw.match(/--timeout\s+(\d+)/i) ?? restRaw.match(/(^|\s)timeout=(\d+)/i)
-  const timeoutSec = timeoutMatch ? Number(timeoutMatch[timeoutMatch.length - 1]) : undefined
-
   const scanMatch = restRaw.match(/--scan(?:-concurrency)?\s+(\d+)/i)
     ?? restRaw.match(/(^|\s)scan=(\d+)/i)
     ?? restRaw.match(/(^|\s)scanConcurrency=(\d+)/i)
@@ -42,10 +42,6 @@ const parseBackupOpenListArgs = (text: string) => {
     ?? restRaw.match(/(^|\s)per_page=(\d+)/i)
   const perPage = perPageMatch ? Number(perPageMatch[perPageMatch.length - 1]) : undefined
 
-  const modeFull = /(^|\s)(--full|full)(\s|$)/i.test(restRaw)
-  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental)(\s|$)/i.test(restRaw)
-  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
-
   const transportApi = /(^|\s)(--api)(\s|$)/i.test(restRaw)
   const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(restRaw)
   const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(restRaw)
@@ -57,10 +53,8 @@ const parseBackupOpenListArgs = (text: string) => {
     toDir,
     maxFiles,
     concurrency,
-    timeoutSec,
     scanConcurrency,
     perPage,
-    mode,
     transport,
     help,
   }
@@ -70,10 +64,10 @@ const openListToOpenListHelpText = [
   'OpenList -> OpenList 备份用法：',
   '- 私聊：#备份oplist [源OpenList地址] [参数]',
   '- 示例：#备份oplist https://pan.example.com',
-  '- #备份oplist https://pan.example.com --src / --to /backup --inc',
+  `- 固定策略：mode=${FIXED_BACKUP_MODE} 单文件超时=${FIXED_TIMEOUT_SEC}s（不再通过命令配置）`,
   '- #备份oplist https://pan.example.com --api',
   '- #备份oplist https://pan.example.com --webdav',
-  '- #备份oplist https://pan.example.com --full --concurrency 3 --timeout 600',
+  '- #备份oplist https://pan.example.com --concurrency 3',
   '- #备份oplist https://pan.example.com --scan 30 --per-page 2000',
   '提示：目标端使用 openlistBaseUrl/openlistUsername/openlistPassword（与群文件同步共用）。',
   '提示：传输默认 auto（源端下载偏向 API，目标端上传偏向 WebDAV；失败会回退）。',
@@ -90,10 +84,8 @@ export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, a
     toDir,
     maxFiles,
     concurrency,
-    timeoutSec,
     scanConcurrency,
     perPage,
-    mode,
     transport,
     help,
   } = parseBackupOpenListArgs(argsText)
@@ -110,10 +102,10 @@ export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, a
       toDir,
       maxFiles,
       concurrency,
-      timeoutSec,
+      timeoutSec: FIXED_TIMEOUT_SEC,
       scanConcurrency,
       perPage,
-      mode,
+      mode: FIXED_BACKUP_MODE,
       transport,
       report: (msg) => e.reply(msg),
     })

@@ -11,6 +11,7 @@ type SyncMode = 'full' | 'incremental'
 const MAX_FILE_TIMEOUT_SEC = 3000
 const MIN_FILE_TIMEOUT_SEC = 10
 const DEFAULT_PROGRESS_REPORT_EVERY = 10
+const FIXED_SYNC_MODE: SyncMode = 'incremental'
 
 const buildUploadFileCandidates = (filePath: string) => {
   const normalized = filePath.replaceAll('\\', '/')
@@ -60,7 +61,7 @@ const parseArgs = (text: string) => {
       const token = tokens[i]
       const prevToken = tokens[i - 1]
       if (!/^\d+$/.test(token)) continue
-      if (prevToken && /^--(folder|max|concurrency|group|gid|groupid)$/i.test(prevToken)) continue
+      if (prevToken && /^--(folder|max|concurrency|group|gid|groupid|to|timeout)$/i.test(prevToken)) continue
       groupId = token
       break
     }
@@ -94,14 +95,6 @@ const parseSyncArgs = (text: string) => {
   const flatSpecified = flatFlag || keepFlag
   const flat = flatFlag ? true : keepFlag ? false : undefined
 
-  const timeoutMatch = raw.match(/--timeout\s+(\d+)/i) ?? raw.match(/(^|\s)timeout=(\d+)/i)
-  const timeoutSec = timeoutMatch ? Number(timeoutMatch[timeoutMatch.length - 1]) : undefined
-  const timeoutSpecified = Boolean(timeoutMatch)
-
-  const modeFull = /(^|\s)(--full|full)(\s|$)/i.test(raw)
-  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental)(\s|$)/i.test(raw)
-  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
-
   return {
     groupId: base.groupId,
     folderId: base.folderId,
@@ -112,9 +105,6 @@ const parseSyncArgs = (text: string) => {
     flatSpecified,
     to,
     toSpecified,
-    timeoutSec,
-    timeoutSpecified,
-    mode,
     help: base.help,
   }
 }
@@ -248,17 +238,9 @@ const syncHelpText = [
   '- #同步群文件 123456 --folder <id>：从指定文件夹开始',
   '- #同步群文件 123456 --max <n>：最多处理 n 个文件',
   '- #同步群文件 123456 --concurrency <n>：并发数（会覆盖群配置的并发）',
-  '- #同步群文件 123456 --timeout <sec>：单文件超时秒数（仅影响单个文件）',
-  '- #同步群文件 123456 --full/--inc：覆盖群配置的同步模式（全量/增量）',
+  `- 固定策略：mode=${FIXED_SYNC_MODE} 单文件超时=${MAX_FILE_TIMEOUT_SEC}s（不再通过命令配置）`,
   '前置：请先在配置文件填写 openlistBaseUrl/openlistUsername/openlistPassword。',
 ].join('\n')
-
-const normalizeSyncMode = (value: unknown, fallback: SyncMode): SyncMode => {
-  const v = String(value ?? '').trim().toLowerCase()
-  if (v === 'full' || v === '全量') return 'full'
-  if (v === 'incremental' || v === '增量' || v === 'inc') return 'incremental'
-  return fallback
-}
 
 const getGroupSyncTarget = (cfg: any, groupId: string) => {
   const list = cfg?.groupSyncTargets
@@ -280,9 +262,6 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
     flatSpecified,
     to,
     toSpecified,
-    timeoutSec,
-    timeoutSpecified,
-    mode: forcedMode,
     help,
   } = parseSyncArgs(argsText)
   if (help) {
@@ -300,11 +279,7 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
   const defaults = cfg.groupSyncDefaults ?? {}
   const targetCfg = getGroupSyncTarget(cfg, groupId)
 
-  const mode = forcedMode ?? (
-    targetCfg
-      ? normalizeSyncMode(targetCfg?.mode, normalizeSyncMode(defaults?.mode, 'incremental'))
-      : 'full'
-  )
+  const mode = FIXED_SYNC_MODE
 
   const urlC = concurrencySpecified
     ? (typeof concurrency === 'number' ? concurrency : 3)
@@ -313,10 +288,6 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
   const transferC = concurrencySpecified
     ? (typeof concurrency === 'number' ? concurrency : 3)
     : (typeof targetCfg?.transferConcurrency === 'number' ? targetCfg.transferConcurrency : (typeof defaults?.transferConcurrency === 'number' ? defaults.transferConcurrency : 3))
-
-  const fileTimeout = timeoutSpecified
-    ? (typeof timeoutSec === 'number' ? timeoutSec : 600)
-    : (typeof targetCfg?.fileTimeoutSec === 'number' ? targetCfg.fileTimeoutSec : (typeof defaults?.fileTimeoutSec === 'number' ? defaults.fileTimeoutSec : 600))
 
   const retryTimes = typeof targetCfg?.retryTimes === 'number'
     ? targetCfg.retryTimes
@@ -362,7 +333,7 @@ export const syncGroupFilesToOpenList = karin.command(/^#?(同步群文件|群�
       mode,
       urlConcurrency: Math.max(1, Math.floor(urlC) || 1),
       transferConcurrency: Math.max(1, Math.floor(transferC) || 1),
-      fileTimeoutSec: Math.min(MAX_FILE_TIMEOUT_SEC, Math.max(MIN_FILE_TIMEOUT_SEC, Math.floor(fileTimeout) || MIN_FILE_TIMEOUT_SEC)),
+      fileTimeoutSec: MAX_FILE_TIMEOUT_SEC,
       retryTimes: Math.max(0, Math.floor(retryTimes) || 0),
       retryDelayMs: Math.max(0, Math.floor(retryDelayMs) || 0),
       progressReportEvery: Math.max(0, Math.floor(progressEvery) || 0),

@@ -6,8 +6,6 @@ import { backupOpenListToOpenListCore } from '@/model/openlist'
 import { normalizePosixPath } from '@/model/shared/path'
 import {
   DEFAULT_OPLT_NIGHTLY_APPEND_HOST_DIR,
-  DEFAULT_OPLT_NIGHTLY_CRON,
-  DEFAULT_OPLT_NIGHTLY_MODE,
   DEFAULT_OPLT_NIGHTLY_TRANSPORT,
   resolveOpltMapping,
   readOpltData,
@@ -18,6 +16,10 @@ import { formatErrorMessage } from '@/model/shared/errors'
 import { readJsonSafe, writeJsonSafe } from '@/model/shared/fsJson'
 import { karin, logger, render, segment } from 'node-karin'
 import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
+
+const FIXED_BACKUP_MODE: SyncMode = 'incremental'
+const FIXED_BACKUP_TIMEOUT_SEC = 3000
+const DEFAULT_NIGHTLY_CRON = '0 0 2 * * *'
 
 const formatDateTime = (date: Date) => {
   try {
@@ -98,8 +100,8 @@ const opHelpText = [
   '- #删除群备份 <序号>：按序号关闭该群上传自动备份（uploadBackup=off）',
   '- #添加oplt <A> <B>：添加一条 oplts 记录（支持 URL，会自动提取目录路径）',
   '- #删除oplt <序号>：删除一条 oplts 记录',
-  '- #oplt备份 <序号|全部>：手动执行 oplts 备份（可加 --inc/--full --auto/--api/--webdav）',
-  '- #oplt夜间 查看/开启/关闭：夜间自动备份 oplts（可加 cron + --inc/--full 等）',
+  `- #oplt备份 <序号|全部>：手动执行 oplts 备份（固定 ${FIXED_BACKUP_MODE} + timeout=${FIXED_BACKUP_TIMEOUT_SEC}s，可选 --auto/--api/--webdav）`,
+  '- #oplt夜间 查看：查看夜间自动备份状态（由统一调度器管理，不支持通过命令修改）',
   '- #op帮助：显示本帮助',
   '',
   '提示：更完整的配置建议用 #群同步配置 或 WebUI。',
@@ -134,9 +136,8 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
 
   const nightlyLine = (() => {
     const nightly: any = (user as any)?.nightly
-    const enabled = nightly?.enabled === true
-    const cron = String(nightly?.cron ?? DEFAULT_OPLT_NIGHTLY_CRON).trim() || DEFAULT_OPLT_NIGHTLY_CRON
-    const mode: SyncMode = (nightly?.mode === 'full' || nightly?.mode === 'incremental') ? nightly.mode : DEFAULT_OPLT_NIGHTLY_MODE
+    const globalEnabled = (cfg as any)?.scheduler?.enabled !== false && (cfg as any)?.scheduler?.opltNightly?.enabled !== false
+    const cron = String((cfg as any)?.scheduler?.tickCron ?? DEFAULT_NIGHTLY_CRON).trim() || DEFAULT_NIGHTLY_CRON
     const transport: OpenListBackupTransport = (nightly?.transport === 'api' || nightly?.transport === 'webdav' || nightly?.transport === 'auto')
       ? nightly.transport
       : DEFAULT_OPLT_NIGHTLY_TRANSPORT
@@ -146,8 +147,8 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
       ? `ok=${nightly.lastResult.ok ?? '-'} skip=${nightly.lastResult.skipped ?? '-'} fail=${nightly.lastResult.fail ?? '-'}`
       : '-'
 
-    if (!enabled) return '夜间：OFF（#oplt夜间 开启）'
-    return `夜间：ON  cron=${cron}  ${mode}/${transport}  hostDir=${hostDir ? 'on' : 'off'}\nlast=${last}  ${lastResult}`
+    if (!globalEnabled) return '夜间：OFF（全局已关闭）'
+    return `夜间：ON  cron=${cron}  ${FIXED_BACKUP_MODE}/${transport}  timeout=${FIXED_BACKUP_TIMEOUT_SEC}s  hostDir=${hostDir ? 'on' : 'off'}\nlast=${last}  ${lastResult}`
   })()
 
   const groupsText = (() => {
@@ -443,10 +444,6 @@ const parseOpltBackupArgs = (text: string) => {
     return undefined
   })()
 
-  const modeFull = /(^|\s)(--full|full|全量)(\s|$)/i.test(raw)
-  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental|增量)(\s|$)/i.test(raw)
-  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
-
   const transportApi = /(^|\s)(--api)(\s|$)/i.test(raw)
   const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(raw)
   const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(raw)
@@ -459,14 +456,13 @@ const parseOpltBackupArgs = (text: string) => {
   const sourceUsername = pickFlagValue(raw, ['user', 'username'])
   const sourcePassword = pickFlagValue(raw, ['pass', 'password'])
 
-  return { help, selection, mode, transport, appendHostDir, sourceUsername, sourcePassword }
+  return { help, selection, transport, appendHostDir, sourceUsername, sourcePassword }
 }
 
 const opltsBackupHelpText = [
   'oplt 手动备份用法：',
   '- #oplt备份 1',
   '- #oplt备份 全部',
-  '- #oplt备份 1 --inc | --full',
   '- #oplt备份 1 --auto | --api | --webdav',
   '- 可选：--host（在目标目录下追加 /<sourceHost>；默认不追加）',
   '- 可选：--user <u> --pass <p>（源端需要登录时）',
@@ -477,7 +473,7 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
   if (!e.isPrivate) return false
 
   const argsText = String(e.msg ?? '').replace(/^#?oplt备份/i, '').trim()
-  const { help, selection, mode, transport, appendHostDir, sourceUsername, sourcePassword } = parseOpltBackupArgs(argsText)
+  const { help, selection, transport, appendHostDir, sourceUsername, sourcePassword } = parseOpltBackupArgs(argsText)
 
   const userKey = getUserKey(e)
   const data = readOpltData()
@@ -502,13 +498,13 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
   }
 
   const finalAppendHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : false
-  const effectiveMode: SyncMode = mode ?? 'incremental'
   const effectiveTransport: OpenListBackupTransport = transport ?? 'auto'
 
   await e.reply([
     '开始执行 oplts 备份：',
     `- 条目：${selection === 'all' ? `全部（${list.length}）` : String(selection)}`,
-    `- mode：${effectiveMode}`,
+    `- mode：${FIXED_BACKUP_MODE}`,
+    `- timeout：${FIXED_BACKUP_TIMEOUT_SEC}s`,
     `- transport：${effectiveTransport}`,
     `- appendHostDir：${finalAppendHostDir ? 'on' : 'off'}`,
   ].join('\n'))
@@ -532,9 +528,10 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
         sourcePassword: sourcePassword ? String(sourcePassword) : undefined,
         srcDir,
         toDir,
-        mode: effectiveMode,
+        mode: FIXED_BACKUP_MODE,
         transport: effectiveTransport,
         appendHostDir: finalAppendHostDir,
+        timeoutSec: FIXED_BACKUP_TIMEOUT_SEC,
         report: (msg) => e.reply(`【oplt ${index}】${msg}`),
       })
 
@@ -572,27 +569,6 @@ const parseOpltNightlyArgs = (text: string) => {
     return 'unknown' as const
   })()
 
-  const cronFromFlag = pickFlagValue(raw, ['cron'])
-  const cronFromArgs = (() => {
-    if (action !== 'enable') return undefined
-    const rest = tokens.slice(1)
-    const cronParts: string[] = []
-    for (const t of rest) {
-      if (t.startsWith('--')) break
-      if (/^[a-zA-Z]+=/.test(t)) break
-      cronParts.push(t)
-      if (cronParts.length >= 6) break
-    }
-    if (cronParts.length === 5 || cronParts.length === 6) return cronParts.join(' ')
-    return undefined
-  })()
-
-  const cron = String(cronFromFlag ?? cronFromArgs ?? '').trim() || undefined
-
-  const modeFull = /(^|\s)(--full|full|全量)(\s|$)/i.test(raw)
-  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental|增量)(\s|$)/i.test(raw)
-  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
-
   const transportApi = /(^|\s)(--api)(\s|$)/i.test(raw)
   const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(raw)
   const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(raw)
@@ -602,33 +578,30 @@ const parseOpltNightlyArgs = (text: string) => {
   const noHost = /(^|\s)(--no-host|--nohost)(\s|$)/i.test(raw)
   const appendHostDir = host ? true : noHost ? false : undefined
 
-  return { help, action, cron, mode, transport, appendHostDir }
+  return { help, action, transport, appendHostDir }
 }
 
 const opltsNightlyHelpText = [
   'oplt 夜间自动备份：',
   '- #oplt夜间 查看',
-  '- #oplt夜间 开启 0 0 3 * * * --inc --auto',
-  '- #oplt夜间 关闭',
-  '参数：cron=秒 分 时 日 月 周（也支持 5 段：分 时 日 月 周）',
-  '可选：--inc/--full  --auto/--api/--webdav  --host/--no-host',
+  '说明：夜间自动备份由统一调度器管理，默认每天 02:00 触发（先群后 oplts），固定增量 + 单文件超时 3000s，不支持通过命令修改。',
+  '可选（仅影响显示/兼容旧数据）：--auto/--api/--webdav  --host/--no-host',
 ].join('\n')
 
 export const opltsNightly = karin.command(/^#?oplt夜间(.*)$/i, async (e) => {
   if (!e.isPrivate) return false
 
   const argsText = String(e.msg ?? '').replace(/^#?oplt夜间/i, '').trim()
-  const { help, action, cron, mode, transport, appendHostDir } = parseOpltNightlyArgs(argsText)
+  const { help, action, transport, appendHostDir } = parseOpltNightlyArgs(argsText)
 
   const userKey = getUserKey(e)
   const data = readOpltData()
   const user = withOpltUser(data, userKey)
 
   const nightly = user.nightly ?? {}
-  const enabled = nightly.enabled === true
-
-  const currentCron = String(nightly.cron ?? DEFAULT_OPLT_NIGHTLY_CRON).trim() || DEFAULT_OPLT_NIGHTLY_CRON
-  const currentMode: SyncMode = (nightly.mode === 'full' || nightly.mode === 'incremental') ? nightly.mode : DEFAULT_OPLT_NIGHTLY_MODE
+  const cfg = config()
+  const globalEnabled = (cfg as any)?.scheduler?.enabled !== false && (cfg as any)?.scheduler?.opltNightly?.enabled !== false
+  const currentCron = String((cfg as any)?.scheduler?.tickCron ?? DEFAULT_NIGHTLY_CRON).trim() || DEFAULT_NIGHTLY_CRON
   const currentTransport: OpenListBackupTransport = (nightly.transport === 'api' || nightly.transport === 'webdav' || nightly.transport === 'auto')
     ? nightly.transport
     : DEFAULT_OPLT_NIGHTLY_TRANSPORT
@@ -644,9 +617,10 @@ export const opltsNightly = karin.command(/^#?oplt夜间(.*)$/i, async (e) => {
     const lastResult = nightly.lastResult ? `ok=${nightly.lastResult.ok} skip=${nightly.lastResult.skipped} fail=${nightly.lastResult.fail}` : '-'
     await e.reply([
       'oplt 夜间备份：',
-      `- 状态：${enabled ? 'ON' : 'OFF'}`,
+      `- 状态：${globalEnabled ? 'ON' : 'OFF'}`,
       `- cron：${currentCron}`,
-      `- mode：${currentMode}`,
+      `- mode：${FIXED_BACKUP_MODE}`,
+      `- timeout：${FIXED_BACKUP_TIMEOUT_SEC}s`,
       `- transport：${currentTransport}`,
       `- hostDir：${currentHostDir ? 'on' : 'off'}`,
       `- last：${last}`,
@@ -655,35 +629,27 @@ export const opltsNightly = karin.command(/^#?oplt夜间(.*)$/i, async (e) => {
     return true
   }
 
-  if (action === 'disable') {
-    user.nightly = { ...nightly, enabled: false }
+  if (action === 'enable' || action === 'disable') {
+    const nextTransport: OpenListBackupTransport = transport ?? currentTransport
+    const nextHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : currentHostDir
+    user.nightly = { ...nightly, transport: nextTransport, appendHostDir: nextHostDir }
     writeOpltData(data)
-    await e.reply('已关闭 oplts 夜间自动备份（#oplt夜间 查看）')
+
+    await e.reply([
+      '夜间自动备份已由统一调度器管理，不支持通过命令开/关或修改 cron/mode/timeout。',
+      `- 全局状态：${globalEnabled ? 'ON' : 'OFF'}`,
+      `- cron：${currentCron}`,
+      `- mode：${FIXED_BACKUP_MODE}`,
+      `- timeout：${FIXED_BACKUP_TIMEOUT_SEC}s`,
+      `- transport：${nextTransport}`,
+      `- hostDir：${nextHostDir ? 'on' : 'off'}`,
+      '',
+      '如需关闭：请在配置文件设置 config.scheduler.opltNightly.enabled=false（或关闭 config.scheduler.enabled）。',
+    ].join('\n'))
     return true
   }
 
-  const nextCron = cron ? String(cron).trim() : currentCron
-  const nextMode: SyncMode = mode ?? currentMode
-  const nextTransport: OpenListBackupTransport = transport ?? currentTransport
-  const nextHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : currentHostDir
-
-  user.nightly = {
-    ...nightly,
-    enabled: true,
-    cron: nextCron,
-    mode: nextMode,
-    transport: nextTransport,
-    appendHostDir: nextHostDir,
-  }
-  writeOpltData(data)
-
-  await e.reply([
-    '已开启 oplts 夜间自动备份：',
-    `- cron：${nextCron}`,
-    `- mode：${nextMode}`,
-    `- transport：${nextTransport}`,
-    `- hostDir：${nextHostDir ? 'on' : 'off'}`,
-  ].join('\n'))
+  await e.reply(opltsNightlyHelpText)
   return true
 }, {
   priority: 9999,
