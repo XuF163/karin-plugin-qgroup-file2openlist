@@ -224,6 +224,14 @@
         <div class="card-title">常用命令 <span class="hint">建议私聊触发</span></div>
         <div class="cmds">
           <div class="cmd">
+            <div class="cmd-key mono">#群文件面板</div>
+            <div class="cmd-desc">主人私聊管理面板（群绑定 / 监听 / OP转发 规则）。</div>
+          </div>
+          <div class="cmd">
+            <div class="cmd-key mono">#绑定备份群</div>
+            <div class="cmd-desc">把群加入配置，并默认开启群文件上传监听（主人权限）。</div>
+          </div>
+          <div class="cmd">
             <div class="cmd-key mono">#同步群文件</div>
             <div class="cmd-desc">把群文件同步到 OpenList（默认增量）。默认仅私聊触发。</div>
           </div>
@@ -235,12 +243,17 @@
             <div class="cmd-key mono">#我的备份</div>
             <div class="cmd-desc">
               查看备份群（uploadBackup=on）和 oplts 列表。<br />
-              主人管理：<span class="mono">#添加备份群123</span> / <span class="mono">#删除群备份 1</span> / <span class="mono">#添加oplt A B</span> / <span class="mono">#删除oplt 1</span> / <span class="mono">#op帮助</span>
+              主人管理：<span class="mono">#添加备份群123</span> / <span class="mono">#删除群备份 1</span> / <span class="mono">#添加oplt
+                A B</span> / <span class="mono">#删除oplt 1</span> / <span class="mono">#op帮助</span>
             </div>
           </div>
           <div class="cmd">
             <div class="cmd-key mono">#群同步配置</div>
             <div class="cmd-desc">查看/设置当前群的同步目标目录、模式等参数。</div>
+          </div>
+          <div class="cmd">
+            <div class="cmd-key mono">#op转发</div>
+            <div class="cmd-desc">OpenList → OpenList 转发规则（多源站），支持列表/查看/执行/删除。</div>
           </div>
           <div class="cmd">
             <div class="cmd-key mono">#群文件帮助</div>
@@ -253,9 +266,11 @@
         <div class="card-title">快捷提示 <span class="hint">常用参数一眼懂</span></div>
         <ul class="tips">
           <li class="tip"><span class="dot"></span><span>试试：<span class="mono">#同步群文件 --help</span> 查看参数说明。</span></li>
-          <li class="tip"><span class="dot"></span><span>全量同步：<span class="mono">#同步群文件 --mode=full</span>（文件多时更慢）。</span></li>
-          <li class="tip"><span class="dot"></span><span>自定义目标目录：<span class="mono">#同步群文件 --to=/qq/群号</span></span></li>
-          <li class="tip"><span class="dot"></span><span>备份列表：<span class="mono">#我的备份</span>（主人：<span class="mono">#添加备份群123</span> / <span class="mono">#删除群备份 1</span>）</span></li>
+          <li class="tip"><span class="dot"></span><span>全量同步：<span class="mono">#同步群文件
+                --mode=full</span>（文件多时更慢）。</span></li>
+          <li class="tip"><span class="dot"></span><span>自定义目标目录：<span class="mono">#同步群文件 --to=/qq/群号</span></span>
+          </li>
+          <li class="tip"><span class="dot"></span><span>只想先验证连通性：先少量同步或先跑导出。</span></li>
         </ul>
       </div>
     </div>

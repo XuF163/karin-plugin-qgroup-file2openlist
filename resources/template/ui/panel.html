@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>群文件面板</title>
+  <style>
+    :root {
+      --w: 540px;
+      --bg1: #0b1220;
+      --bg2: #0b1020;
+      --card: rgba(255, 255, 255, 0.92);
+      --soft: rgba(15, 23, 42, 0.06);
+      --stroke: rgba(15, 23, 42, 0.12);
+      --text: #0b1220;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    html,
+    body {
+      width: var(--w);
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      background:
+        radial-gradient(700px 700px at 0% 8%, rgba(59, 130, 246, 0.20), transparent 55%),
+        radial-gradient(700px 700px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 52%),
+        radial-gradient(700px 700px at 70% 96%, rgba(34, 197, 94, 0.10), transparent 56%),
+        linear-gradient(150deg, #f8fafc, #eef2ff 38%, #f1f5f9);
+    }
+
+    .wrap {
+      width: 100%;
+      padding: 22px 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .header {
+      padding: 18px 18px 14px;
+      border-radius: 18px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      box-shadow:
+        0 14px 30px rgba(2, 6, 23, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .title {
+      font-size: 30px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .meta {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid var(--stroke);
+      background: rgba(15, 23, 42, 0.04);
+      border-radius: 999px;
+      font-weight: 800;
+      color: #0b1220;
+    }
+
+    .grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card {
+      padding: 16px 16px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 12px 26px rgba(2, 6, 23, 0.07),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 16px;
+      margin: 0 0 12px 0;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 8px 10px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .kv .k {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .kv .v {
+      color: #0b1220;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .table {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .row {
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: var(--soft);
+      border-radius: 14px;
+      padding: 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .row .row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .row .row-sub {
+      font-size: 12px;
+      color: #334155;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .tag.ok {
+      color: #14532d;
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.25);
+    }
+
+    .tag.warn {
+      color: #7c2d12;
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(245, 158, 11, 0.30);
+    }
+
+    .tag.bad {
+      color: #7f1d1d;
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+
+    .cmds {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .cmd {
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: var(--soft);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.35;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 4px;
+    }
+
+    .footer .mono {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-weight: 800;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="title">群文件面板</div>
+      <div class="subtitle">主人私聊 · 图片管理台</div>
+      <div class="meta">
+        <div>插件：<span class="mono">{{pluginName}}</span> <span class="badge mono">v{{pluginVersion}}</span></div>
+        <div>生成：<span class="mono">{{generatedAt}}</span></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">OpenList（目的端）<span class="hint">用于群同步 & OP转发的目标端</span></div>
+        <div class="kv">
+          <div class="k">BaseUrl</div>
+          <div class="v mono">{{openlistBaseUrl || '-'}}</div>
+          <div class="k">Username</div>
+          <div class="v mono">{{openlistUsername || '-'}}</div>
+          <div class="k">TargetDir</div>
+          <div class="v mono">{{openlistTargetDir || '-'}}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">已绑定群<span class="hint">{{groups?.length || 0}} 个</span></div>
+
+        {{if groups && groups.length}}
+        <div class="table">
+          {{each groups g}}
+          <div class="row">
+            <div class="row-head">
+              <div>群 <span class="mono">{{g.groupId}}</span></div>
+              <div class="tags">
+                {{if g.enabled}}<span class="tag ok">启用</span>{{else}}<span class="tag bad">停用</span>{{/if}}
+                {{if g.uploadBackup}}<span class="tag ok">监听:on</span>{{else}}<span class="tag warn">监听:off</span>{{/if}}
+                <span class="tag">{{g.modeLabel || g.mode || '-'}}</span>
+              </div>
+            </div>
+            <div class="row-sub">
+              目录：<span class="mono">{{g.targetDir || '-'}}</span><br />
+              最近同步：<span class="mono">{{g.lastSyncAtText || '-'}}</span>
+            </div>
+          </div>
+          {{/each}}
+        </div>
+        {{else}}
+        <div class="hint">暂无群配置。你可以：<span class="mono">#绑定备份群 123456</span></div>
+        {{/if}}
+      </div>
+
+      <div class="card">
+        <div class="card-title">OP 转发规则<span class="hint">{{rules?.length || 0}} 条（多源站）</span></div>
+
+        {{if rules && rules.length}}
+        <div class="table">
+          {{each rules r}}
+          <div class="row">
+            <div class="row-head">
+              <div><span class="mono">{{r.id}}</span>{{if r.name}} · {{r.name}}{{/if}}</div>
+              <div class="tags">
+                <span class="tag">{{r.modeLabel || r.mode || 'full'}}</span>
+                <span class="tag">{{r.transportLabel || r.transport || 'auto'}}</span>
+              </div>
+            </div>
+            <div class="row-sub">
+              源：<span class="mono">{{r.sourceBaseUrl}}</span><br />
+              src：<span class="mono">{{r.srcDir || '/'}}</span> → to：<span class="mono">{{r.toDir || '-'}}</span><br />
+              最近执行：<span class="mono">{{r.lastRunAtText || '-'}}</span>
+              {{if r.lastResultText}}<br />结果：<span class="mono">{{r.lastResultText}}</span>{{/if}}
+            </div>
+          </div>
+          {{/each}}
+        </div>
+        {{else}}
+        <div class="hint">暂无规则。你可以：<span class="mono">#添加op转发 http://127.0.0.1:5244</span></div>
+        {{/if}}
+      </div>
+
+      <div class="card">
+        <div class="card-title">快捷命令<span class="hint">复制即用</span></div>
+        <div class="cmds">
+          {{each quickCommands cmd}}
+          <div class="cmd mono">{{cmd}}</div>
+          {{/each}}
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div>提示：仅主人私聊可用</div>
+      <div class="mono">#群文件面板</div>
+    </div>
+  </div>
+</body>
+
+</html>
+

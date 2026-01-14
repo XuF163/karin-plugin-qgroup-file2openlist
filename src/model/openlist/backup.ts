@@ -60,6 +60,7 @@ export const scanOpenListFiles = async (params: {
   sourceTransport: OpenListBackupConcreteTransport
   sourceBaseUrl: string
   sourceToken: string
+  sourceAuth?: string
   sourceDavBaseUrl?: string
   srcDir: string
   targetRoot: string
@@ -72,6 +73,7 @@ export const scanOpenListFiles = async (params: {
     sourceTransport,
     sourceBaseUrl,
     sourceToken,
+    sourceAuth,
     sourceDavBaseUrl,
     srcDir,
     targetRoot,
@@ -93,6 +95,7 @@ export const scanOpenListFiles = async (params: {
       if (!sourceDavBaseUrl) throw new Error('源端 WebDAV 地址不正确')
       return await webdavPropfindListEntries({
         davBaseUrl: sourceDavBaseUrl,
+        auth: sourceAuth,
         dirPath,
         timeoutMs,
       })
@@ -302,6 +305,10 @@ const activeOpenListBackup = new Set<string>()
 export const backupOpenListToOpenListCore = async (params: {
   /** 源 OpenList 基础地址，例如 https://pan.example.com */
   sourceBaseUrl: string
+  /** 源端账号（可选，未提供则按 guest 访问） */
+  sourceUsername?: string
+  /** 源端密码（可选，未提供则按 guest 访问） */
+  sourcePassword?: string
   /** 源目录（posix path），默认 '/' */
   srcDir?: string
   /** 目标根目录（posix path），默认使用配置 openlistTargetDir */
@@ -327,6 +334,10 @@ export const backupOpenListToOpenListCore = async (params: {
 
   const sourceBaseUrl = String(params.sourceBaseUrl ?? '').trim()
   if (!sourceBaseUrl) throw new Error('缺少源 OpenList 地址')
+
+  const sourceUsername = String(params.sourceUsername ?? '').trim()
+  const sourcePassword = String(params.sourcePassword ?? '').trim()
+  const hasSourceAuth = Boolean(sourceUsername && sourcePassword)
 
   const targetBaseUrl = String(cfg.openlistBaseUrl ?? '').trim()
   const targetUsername = String(cfg.openlistUsername ?? '').trim()
@@ -376,14 +387,32 @@ export const backupOpenListToOpenListCore = async (params: {
     let targetTransport: OpenListBackupConcreteTransport = transport === 'api' ? 'api' : 'webdav'
 
     let sourceToken: string | undefined
+    let sourceTokenPromise: Promise<string> | undefined
     let targetToken: string | undefined
     let targetTokenPromise: Promise<string> | undefined
 
     const getSourceToken = async () => {
       if (typeof sourceToken === 'string') return sourceToken
-      // 源站点允许公开访问时，不需要登录；token 为空 => guest
-      sourceToken = ''
-      return sourceToken
+      if (!hasSourceAuth) {
+        // 源站点允许公开访问时，不需要登录；token 为空 => guest
+        sourceToken = ''
+        return sourceToken
+      }
+
+      if (sourceTokenPromise) return await sourceTokenPromise
+      sourceTokenPromise = openlistApiLogin({
+        baseUrl: sourceBaseUrl,
+        username: sourceUsername,
+        password: sourcePassword,
+        timeoutMs: listTimeoutMs,
+      }).then((token) => {
+        sourceToken = token
+        return token
+      }).catch((error) => {
+        sourceTokenPromise = undefined
+        throw error
+      })
+      return await sourceTokenPromise
     }
 
     const getTargetToken = async () => {
@@ -426,10 +455,13 @@ export const backupOpenListToOpenListCore = async (params: {
       enqueueReport(`备份进行中（${elapsed}s）\n阶段：扫描\n已扫描目录：${scannedDirs}\n已发现文件：${scannedFiles}`)
     }, 10_000)
 
+    const sourceAuth = hasSourceAuth ? buildOpenListAuthHeader(sourceUsername, sourcePassword) : ''
+
     const scanResult = await scanOpenListFiles({
       sourceTransport,
       sourceBaseUrl,
       sourceToken: await getSourceToken(),
+      sourceAuth: sourceAuth || undefined,
       sourceDavBaseUrl,
       srcDir: normalizedSrcDir,
       targetRoot,
@@ -474,7 +506,6 @@ export const backupOpenListToOpenListCore = async (params: {
     let ok = 0
     let fail = 0
 
-    const sourceAuth = '' // 源端 WebDAV 默认无账号；若后续需要，可扩展参数
     const targetDavBase = targetDavBaseUrl
 
     const ensureDirForPath = async (filePath: string) => {

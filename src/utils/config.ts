@@ -105,6 +105,45 @@ export interface Config {
       cron?: string
     }
   }>
+
+  /** OpenList -> OpenList 转发规则（多源站，单目的端由 openlistBaseUrl 决定） */
+  openlistForwardRules?: Array<{
+    /** 规则ID */
+    id: string
+    /** 别名 */
+    name?: string
+
+    /** 源 OpenList baseUrl */
+    sourceBaseUrl: string
+    /** 源端用户名（可选，未填则按 guest 访问） */
+    sourceUsername?: string
+    /** 源端密码（可选） */
+    sourcePassword?: string
+
+    /** 源目录（默认 /） */
+    srcDir?: string
+    /** 目标根目录（默认 openlistTargetDir；最终会按源域名创建子目录） */
+    toDir?: string
+
+    /** 复制模式（默认 full） */
+    mode?: 'full' | 'incremental'
+    /** 传输方式（默认 auto） */
+    transport?: 'auto' | 'webdav' | 'api'
+
+    /** 复制并发（默认 3） */
+    concurrency?: number
+    /** 扫描并发（默认 20） */
+    scanConcurrency?: number
+    /** API per_page（默认 1000） */
+    perPage?: number
+    /** 单文件超时秒数（默认 600） */
+    timeoutSec?: number
+
+    lastRunAt?: number
+    lastResult?: { ok: number, skipped: number, fail: number }
+    createdAt?: number
+    updatedAt?: number
+  }>
 }
 
 /**

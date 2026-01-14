@@ -16,5 +16,6 @@
     "downloadLimitKbps": 0,
     "uploadLimitKbps": 0
   },
-  "groupSyncTargets": []
+  "groupSyncTargets": [],
+  "openlistForwardRules": []
 }
