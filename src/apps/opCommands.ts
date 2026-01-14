@@ -2,15 +2,22 @@ import path from 'node:path'
 import { dir } from '@/dir'
 import { config } from '@/utils'
 import { ensurePluginResources } from '@/utils/resources'
+import { backupOpenListToOpenListCore } from '@/model/openlist'
 import { normalizePosixPath } from '@/model/shared/path'
+import {
+  DEFAULT_OPLT_NIGHTLY_APPEND_HOST_DIR,
+  DEFAULT_OPLT_NIGHTLY_CRON,
+  DEFAULT_OPLT_NIGHTLY_MODE,
+  DEFAULT_OPLT_NIGHTLY_TRANSPORT,
+  resolveOpltMapping,
+  readOpltData,
+  withOpltUser,
+  writeOpltData,
+} from '@/model/oplt'
+import { formatErrorMessage } from '@/model/shared/errors'
 import { readJsonSafe, writeJsonSafe } from '@/model/shared/fsJson'
 import { karin, logger, render, segment } from 'node-karin'
-
-type OpltItem = { left: string, right: string }
-type OpltDataV1 = {
-  version: 1
-  users: Record<string, { oplts: OpltItem[] }>
-}
+import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
 
 const formatDateTime = (date: Date) => {
   try {
@@ -48,26 +55,7 @@ const getUserKey = (e: any) => pickId(
   e?.contact?.user_id,
 ) ?? 'global'
 
-const getOpltDataPath = () => path.join(dir.DataDir, 'op-commands.json')
-
 const normalizeText = (value: unknown) => String(value ?? '').trim()
-
-const readOpltData = (): OpltDataV1 => {
-  const raw = readJsonSafe(getOpltDataPath())
-  const users = raw && typeof raw === 'object' && typeof raw.users === 'object' && raw.users ? raw.users : {}
-  return { version: 1, users }
-}
-
-const writeOpltData = (data: OpltDataV1) => writeJsonSafe(getOpltDataPath(), data)
-
-const withOpltUser = (data: OpltDataV1, userKey: string) => {
-  const key = String(userKey || 'global')
-  const user = data.users[key]
-  if (user && Array.isArray(user.oplts)) return user
-  const next = { oplts: [] as OpltItem[] }
-  data.users[key] = next
-  return next
-}
 
 const truthyFlag = (value: unknown) => {
   if (value === true) return true
@@ -108,8 +96,10 @@ const opHelpText = [
   '- #我的备份：查看已开启上传自动备份的群 + oplts 列表',
   '- #添加备份群<群号>：开启该群上传自动备份（uploadBackup=on）',
   '- #删除群备份 <序号>：按序号关闭该群上传自动备份（uploadBackup=off）',
-  '- #添加oplt <A> <B>：添加一条 oplts 记录（原样保存）',
+  '- #添加oplt <A> <B>：添加一条 oplts 记录（支持 URL，会自动提取目录路径）',
   '- #删除oplt <序号>：删除一条 oplts 记录',
+  '- #oplt备份 <序号|全部>：手动执行 oplts 备份（可加 --inc/--full --auto/--api/--webdav）',
+  '- #oplt夜间 查看/开启/关闭：夜间自动备份 oplts（可加 cron + --inc/--full 等）',
   '- #op帮助：显示本帮助',
   '',
   '提示：更完整的配置建议用 #群同步配置 或 WebUI。',
@@ -142,6 +132,24 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
   const groupsPreviewLimit = 8
   const opltsPreviewLimit = 8
 
+  const nightlyLine = (() => {
+    const nightly: any = (user as any)?.nightly
+    const enabled = nightly?.enabled === true
+    const cron = String(nightly?.cron ?? DEFAULT_OPLT_NIGHTLY_CRON).trim() || DEFAULT_OPLT_NIGHTLY_CRON
+    const mode: SyncMode = (nightly?.mode === 'full' || nightly?.mode === 'incremental') ? nightly.mode : DEFAULT_OPLT_NIGHTLY_MODE
+    const transport: OpenListBackupTransport = (nightly?.transport === 'api' || nightly?.transport === 'webdav' || nightly?.transport === 'auto')
+      ? nightly.transport
+      : DEFAULT_OPLT_NIGHTLY_TRANSPORT
+    const hostDir = typeof nightly?.appendHostDir === 'boolean' ? nightly.appendHostDir : DEFAULT_OPLT_NIGHTLY_APPEND_HOST_DIR
+    const last = typeof nightly?.lastRunAt === 'number' && Number.isFinite(nightly.lastRunAt) ? formatDateTime(new Date(nightly.lastRunAt)) : '-'
+    const lastResult = nightly?.lastResult && typeof nightly.lastResult === 'object'
+      ? `ok=${nightly.lastResult.ok ?? '-'} skip=${nightly.lastResult.skipped ?? '-'} fail=${nightly.lastResult.fail ?? '-'}`
+      : '-'
+
+    if (!enabled) return '夜间：OFF（#oplt夜间 开启）'
+    return `夜间：ON  cron=${cron}  ${mode}/${transport}  hostDir=${hostDir ? 'on' : 'off'}\nlast=${last}  ${lastResult}`
+  })()
+
   const groupsText = (() => {
     if (!groups.length) return '（空）\n可用：#添加备份群123'
     const lines: string[] = []
@@ -157,8 +165,12 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
   })()
 
   const opltsText = (() => {
-    if (!user.oplts.length) return '（空）\n可用：#添加oplt A B'
-    const lines: string[] = []
+    const lines: string[] = [nightlyLine, '']
+    if (!user.oplts.length) {
+      lines.push('（空）')
+      lines.push('可用：#添加oplt A B')
+      return lines.join('\n')
+    }
     const preview = user.oplts.slice(0, opltsPreviewLimit)
     for (let i = 0; i < preview.length; i++) {
       const it = preview[i]
@@ -183,8 +195,9 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
     '',
     'oplt（A B）：',
     ...(() => {
-      if (!user.oplts.length) return ['- （空）可用：#添加oplt <A> <B>']
-      return user.oplts.map((it, i) => `- ${i + 1}. ${it.left} ${it.right}`)
+      const lines: string[] = [`- ${nightlyLine.replaceAll('\n', ' ')}`]
+      if (!user.oplts.length) return [...lines, '- （空）可用：#添加oplt <A> <B>']
+      return [...lines, ...user.oplts.map((it, i) => `- ${i + 1}. ${it.left} ${it.right}`)]
     })(),
   ].join('\n')
 
@@ -344,15 +357,20 @@ export const addOplt = karin.command(/^#?添加oplt(.*)$/i, async (e) => {
   }
 
   try {
+    const resolved = resolveOpltMapping({ left, right })
+    const normalizedLeft = resolved.srcDir === '/' ? resolved.sourceBaseUrl : `${resolved.sourceBaseUrl}${resolved.srcDir}`
+    const normalizedRight = resolved.toDir
+
     const userKey = getUserKey(e)
     const data = readOpltData()
     const user = withOpltUser(data, userKey)
 
-    const exists = user.oplts.some((it) => it.left === left && it.right === right)
-    if (!exists) user.oplts.push({ left, right })
+    const exists = user.oplts.some((it) => it.left === normalizedLeft && it.right === normalizedRight)
+    if (!exists) user.oplts.push({ left: normalizedLeft, right: normalizedRight })
     writeOpltData(data)
 
-    await e.reply(exists ? '该 oplts 已存在（未重复添加）' : `已添加 oplts：${left} ${right}`)
+    const normalizedHint = (left !== normalizedLeft || right !== normalizedRight) ? '\n（已识别并归一化输入）' : ''
+    await e.reply(exists ? '该 oplts 已存在（未重复添加）' : `已添加 oplts：${normalizedLeft} -> ${normalizedRight}${normalizedHint}`)
     return true
   } catch (error: any) {
     logger.error(error)
@@ -399,5 +417,277 @@ export const removeOplt = karin.command(/^#?删除oplt(.*)$/i, async (e) => {
   priority: 9999,
   log: true,
   name: '删除oplt',
+  permission: 'master',
+})
+
+const pickFlagValue = (raw: string, names: string[]) => {
+  for (const name of names) {
+    const m = raw.match(new RegExp(`--${name}\\\\s+(\\\\S+)`, 'i')) ?? raw.match(new RegExp(`(^|\\\\s)${name}=(\\\\S+)`, 'i'))
+    if (m) return m[m.length - 1]
+  }
+  return undefined
+}
+
+const parseOpltBackupArgs = (text: string) => {
+  const raw = String(text ?? '').trim()
+  const tokens = raw ? raw.split(/\s+/).filter(Boolean) : []
+
+  const help = /(^|\s)(--help|-h|help|\?)(\s|$)/i.test(raw)
+  const first = tokens[0]
+
+  const selection = (() => {
+    if (!first) return undefined
+    if (/^(all|全部)$/i.test(first)) return 'all' as const
+    const n = Number(first)
+    if (Number.isFinite(n) && n > 0) return Math.floor(n)
+    return undefined
+  })()
+
+  const modeFull = /(^|\s)(--full|full|全量)(\s|$)/i.test(raw)
+  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental|增量)(\s|$)/i.test(raw)
+  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
+
+  const transportApi = /(^|\s)(--api)(\s|$)/i.test(raw)
+  const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(raw)
+  const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(raw)
+  const transport: OpenListBackupTransport | undefined = transportApi ? 'api' : transportWebDav ? 'webdav' : transportAuto ? 'auto' : undefined
+
+  const host = /(^|\s)(--host|--append-host)(\s|$)/i.test(raw)
+  const noHost = /(^|\s)(--no-host|--nohost)(\s|$)/i.test(raw)
+  const appendHostDir = host ? true : noHost ? false : undefined
+
+  const sourceUsername = pickFlagValue(raw, ['user', 'username'])
+  const sourcePassword = pickFlagValue(raw, ['pass', 'password'])
+
+  return { help, selection, mode, transport, appendHostDir, sourceUsername, sourcePassword }
+}
+
+const opltsBackupHelpText = [
+  'oplt 手动备份用法：',
+  '- #oplt备份 1',
+  '- #oplt备份 全部',
+  '- #oplt备份 1 --inc | --full',
+  '- #oplt备份 1 --auto | --api | --webdav',
+  '- 可选：--host（在目标目录下追加 /<sourceHost>；默认不追加）',
+  '- 可选：--user <u> --pass <p>（源端需要登录时）',
+  '提示：先用 #我的备份 查看序号',
+].join('\n')
+
+export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
+  const argsText = String(e.msg ?? '').replace(/^#?oplt备份/i, '').trim()
+  const { help, selection, mode, transport, appendHostDir, sourceUsername, sourcePassword } = parseOpltBackupArgs(argsText)
+
+  const userKey = getUserKey(e)
+  const data = readOpltData()
+  const user = withOpltUser(data, userKey)
+  if (!user.oplts.length) {
+    await e.reply('oplt 列表为空：先用 #添加oplt <A> <B> 添加，再用 #我的备份 查看。')
+    return true
+  }
+
+  if (help || selection == null) {
+    await e.reply(opltsBackupHelpText)
+    return true
+  }
+
+  const list = selection === 'all'
+    ? user.oplts.map((it, idx) => ({ index: idx + 1, it }))
+    : [{ index: selection, it: user.oplts[selection - 1] }].filter((x) => Boolean(x.it))
+
+  if (!list.length) {
+    await e.reply(`序号超出范围：${String(selection)}\n提示：先用 #我的备份 查看序号`)
+    return true
+  }
+
+  const finalAppendHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : false
+  const effectiveMode: SyncMode = mode ?? 'incremental'
+  const effectiveTransport: OpenListBackupTransport = transport ?? 'auto'
+
+  await e.reply([
+    '开始执行 oplts 备份：',
+    `- 条目：${selection === 'all' ? `全部（${list.length}）` : String(selection)}`,
+    `- mode：${effectiveMode}`,
+    `- transport：${effectiveTransport}`,
+    `- appendHostDir：${finalAppendHostDir ? 'on' : 'off'}`,
+  ].join('\n'))
+
+  let sumOk = 0
+  let sumSkipped = 0
+  let sumFail = 0
+
+  for (const { index, it } of list) {
+    try {
+      const { sourceBaseUrl, srcDir, toDir } = resolveOpltMapping({ left: it.left, right: it.right })
+      await e.reply([
+        `【oplt ${index}】`,
+        `源：${sourceBaseUrl}${srcDir === '/' ? '' : srcDir}`,
+        `目标：${toDir}`,
+      ].join('\n'))
+
+      const res = await backupOpenListToOpenListCore({
+        sourceBaseUrl,
+        sourceUsername: sourceUsername ? String(sourceUsername) : undefined,
+        sourcePassword: sourcePassword ? String(sourcePassword) : undefined,
+        srcDir,
+        toDir,
+        mode: effectiveMode,
+        transport: effectiveTransport,
+        appendHostDir: finalAppendHostDir,
+        report: (msg) => e.reply(`【oplt ${index}】${msg}`),
+      })
+
+      sumOk += res.ok
+      sumSkipped += res.skipped
+      sumFail += res.fail
+    } catch (error: any) {
+      logger.error(error)
+      await e.reply(`【oplt ${index}】失败：${formatErrorMessage(error)}`)
+      sumFail += 1
+    }
+  }
+
+  await e.reply(`oplt 备份完成：成功 ${sumOk}，跳过 ${sumSkipped}，失败 ${sumFail}`)
+  return true
+}, {
+  priority: 9999,
+  log: true,
+  name: 'oplt备份',
+  permission: 'master',
+})
+
+const parseOpltNightlyArgs = (text: string) => {
+  const raw = String(text ?? '').trim()
+  const tokens = raw ? raw.split(/\s+/).filter(Boolean) : []
+
+  const help = /(^|\s)(--help|-h|help|\?)(\s|$)/i.test(raw)
+  const actionRaw = tokens[0] ?? ''
+  const action = (() => {
+    const v = String(actionRaw).trim().toLowerCase()
+    if (!v) return 'view' as const
+    if (['查看', '状态', 'view', 'list', 'status'].includes(v)) return 'view' as const
+    if (['开启', '开', 'on', 'enable', 'start'].includes(v)) return 'enable' as const
+    if (['关闭', '关', 'off', 'disable', 'stop'].includes(v)) return 'disable' as const
+    return 'unknown' as const
+  })()
+
+  const cronFromFlag = pickFlagValue(raw, ['cron'])
+  const cronFromArgs = (() => {
+    if (action !== 'enable') return undefined
+    const rest = tokens.slice(1)
+    const cronParts: string[] = []
+    for (const t of rest) {
+      if (t.startsWith('--')) break
+      if (/^[a-zA-Z]+=/.test(t)) break
+      cronParts.push(t)
+      if (cronParts.length >= 6) break
+    }
+    if (cronParts.length === 5 || cronParts.length === 6) return cronParts.join(' ')
+    return undefined
+  })()
+
+  const cron = String(cronFromFlag ?? cronFromArgs ?? '').trim() || undefined
+
+  const modeFull = /(^|\s)(--full|full|全量)(\s|$)/i.test(raw)
+  const modeInc = /(^|\s)(--inc|--incremental|inc|incremental|增量)(\s|$)/i.test(raw)
+  const mode: SyncMode | undefined = modeFull ? 'full' : modeInc ? 'incremental' : undefined
+
+  const transportApi = /(^|\s)(--api)(\s|$)/i.test(raw)
+  const transportWebDav = /(^|\s)(--webdav|--dav)(\s|$)/i.test(raw)
+  const transportAuto = /(^|\s)(--auto)(\s|$)/i.test(raw)
+  const transport: OpenListBackupTransport | undefined = transportApi ? 'api' : transportWebDav ? 'webdav' : transportAuto ? 'auto' : undefined
+
+  const host = /(^|\s)(--host|--append-host)(\s|$)/i.test(raw)
+  const noHost = /(^|\s)(--no-host|--nohost)(\s|$)/i.test(raw)
+  const appendHostDir = host ? true : noHost ? false : undefined
+
+  return { help, action, cron, mode, transport, appendHostDir }
+}
+
+const opltsNightlyHelpText = [
+  'oplt 夜间自动备份：',
+  '- #oplt夜间 查看',
+  '- #oplt夜间 开启 0 0 3 * * * --inc --auto',
+  '- #oplt夜间 关闭',
+  '参数：cron=秒 分 时 日 月 周（也支持 5 段：分 时 日 月 周）',
+  '可选：--inc/--full  --auto/--api/--webdav  --host/--no-host',
+].join('\n')
+
+export const opltsNightly = karin.command(/^#?oplt夜间(.*)$/i, async (e) => {
+  if (!e.isPrivate) return false
+
+  const argsText = String(e.msg ?? '').replace(/^#?oplt夜间/i, '').trim()
+  const { help, action, cron, mode, transport, appendHostDir } = parseOpltNightlyArgs(argsText)
+
+  const userKey = getUserKey(e)
+  const data = readOpltData()
+  const user = withOpltUser(data, userKey)
+
+  const nightly = user.nightly ?? {}
+  const enabled = nightly.enabled === true
+
+  const currentCron = String(nightly.cron ?? DEFAULT_OPLT_NIGHTLY_CRON).trim() || DEFAULT_OPLT_NIGHTLY_CRON
+  const currentMode: SyncMode = (nightly.mode === 'full' || nightly.mode === 'incremental') ? nightly.mode : DEFAULT_OPLT_NIGHTLY_MODE
+  const currentTransport: OpenListBackupTransport = (nightly.transport === 'api' || nightly.transport === 'webdav' || nightly.transport === 'auto')
+    ? nightly.transport
+    : DEFAULT_OPLT_NIGHTLY_TRANSPORT
+  const currentHostDir = typeof nightly.appendHostDir === 'boolean' ? nightly.appendHostDir : DEFAULT_OPLT_NIGHTLY_APPEND_HOST_DIR
+
+  if (help || action === 'unknown') {
+    await e.reply(opltsNightlyHelpText)
+    return true
+  }
+
+  if (action === 'view') {
+    const last = nightly.lastRunAt ? formatDateTime(new Date(nightly.lastRunAt)) : '-'
+    const lastResult = nightly.lastResult ? `ok=${nightly.lastResult.ok} skip=${nightly.lastResult.skipped} fail=${nightly.lastResult.fail}` : '-'
+    await e.reply([
+      'oplt 夜间备份：',
+      `- 状态：${enabled ? 'ON' : 'OFF'}`,
+      `- cron：${currentCron}`,
+      `- mode：${currentMode}`,
+      `- transport：${currentTransport}`,
+      `- hostDir：${currentHostDir ? 'on' : 'off'}`,
+      `- last：${last}`,
+      `- result：${lastResult}`,
+    ].join('\n'))
+    return true
+  }
+
+  if (action === 'disable') {
+    user.nightly = { ...nightly, enabled: false }
+    writeOpltData(data)
+    await e.reply('已关闭 oplts 夜间自动备份（#oplt夜间 查看）')
+    return true
+  }
+
+  const nextCron = cron ? String(cron).trim() : currentCron
+  const nextMode: SyncMode = mode ?? currentMode
+  const nextTransport: OpenListBackupTransport = transport ?? currentTransport
+  const nextHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : currentHostDir
+
+  user.nightly = {
+    ...nightly,
+    enabled: true,
+    cron: nextCron,
+    mode: nextMode,
+    transport: nextTransport,
+    appendHostDir: nextHostDir,
+  }
+  writeOpltData(data)
+
+  await e.reply([
+    '已开启 oplts 夜间自动备份：',
+    `- cron：${nextCron}`,
+    `- mode：${nextMode}`,
+    `- transport：${nextTransport}`,
+    `- hostDir：${nextHostDir ? 'on' : 'off'}`,
+  ].join('\n'))
+  return true
+}, {
+  priority: 9999,
+  log: true,
+  name: 'oplt夜间',
   permission: 'master',
 })

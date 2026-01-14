@@ -313,6 +313,8 @@ export const backupOpenListToOpenListCore = async (params: {
   srcDir?: string
   /** 目标根目录（posix path），默认使用配置 openlistTargetDir */
   toDir?: string
+  /** Whether to append `/<sourceHost>` under toDir (default true). */
+  appendHostDir?: boolean
   /** 最大文件数（仅限制扫描后列表长度） */
   maxFiles?: number
   /** 复制并发（默认 3） */
@@ -352,7 +354,9 @@ export const backupOpenListToOpenListCore = async (params: {
 
   const normalizedSrcDir = normalizePosixPath(String(params.srcDir ?? '/'))
   const normalizedTargetBaseDir = normalizePosixPath(String(params.toDir ?? cfg.openlistTargetDir ?? '/'))
-  const targetRoot = normalizePosixPath(path.posix.join(normalizedTargetBaseDir, safeHostDirName(sourceBaseUrl)))
+  const targetRoot = params.appendHostDir === false
+    ? normalizedTargetBaseDir
+    : normalizePosixPath(path.posix.join(normalizedTargetBaseDir, safeHostDirName(sourceBaseUrl)))
 
   const mode: SyncMode = params.mode ?? 'incremental'
   const transport: OpenListBackupTransport = params.transport ?? normalizeOpenListBackupTransport((cfg as any)?.openListBackupTransport, 'auto')
