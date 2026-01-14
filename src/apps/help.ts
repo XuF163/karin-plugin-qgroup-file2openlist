@@ -22,7 +22,7 @@ const formatDateTime = (date: Date) => {
  * 帮助指令（图片）
  * 触发指令：#群文件帮助
  */
-export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮助|openlist帮助)$/i, async (e) => {
+export const helpImage = karin.command(/^#?(群文件帮助|同步群文件帮助|openlist帮助|op帮助)$/i, async (e) => {
   if (!e.isPrivate) return false
 
   try {

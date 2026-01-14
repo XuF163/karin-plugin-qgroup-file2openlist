@@ -1,4 +1,4 @@
-# 重构规划：`karin-plugin-qgroup-file2openlist`（src 目录）
+当前插件 如果要从oplist备份到oplist 命令是什么# 重构规划：`karin-plugin-qgroup-file2openlist`（src 目录）
 
 ## 目标
 

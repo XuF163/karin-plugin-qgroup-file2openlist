@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>我的备份</title>
+  <style>
+    :root {
+      --w: 540px;
+      --h: 960px;
+      --fg: #0b1220;
+      --muted: #64748b;
+      --card: rgba(255, 255, 255, 0.92);
+      --stroke: rgba(15, 23, 42, 0.12);
+      --soft: rgba(15, 23, 42, 0.05);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: var(--w);
+      height: var(--h);
+      margin: 0;
+      padding: 0;
+      background:
+        radial-gradient(680px 680px at 12% 12%, rgba(99, 102, 241, 0.18), transparent 56%),
+        radial-gradient(720px 720px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 54%),
+        radial-gradient(720px 720px at 78% 96%, rgba(34, 197, 94, 0.10), transparent 56%),
+        linear-gradient(140deg, #f8fafc, #eef2ff 38%, #f1f5f9);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    .wrap {
+      width: 100%;
+      height: 100%;
+      padding: 22px 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid var(--stroke);
+      background: rgba(15, 23, 42, 0.04);
+      color: #0b1220;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+
+    .header {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 18px 18px 16px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 14px 30px rgba(2, 6, 23, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .title {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .meta {
+      text-align: left;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .card {
+      padding: 16px 18px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow:
+        0 12px 26px rgba(2, 6, 23, 0.07),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 16px;
+      margin: 0 0 12px 0;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .block {
+      padding: 12px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: var(--soft);
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .mini {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .footer {
+      margin-top: auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.2px;
+      padding: 0 4px;
+    }
+
+    .footer .mono {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-weight: 700;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="title">我的备份 · 列表</div>
+        <div class="subtitle">备份群（uploadBackup=on）与 oplts 快速查看</div>
+      </div>
+      <div class="meta">
+        <div>插件：<span class="mono">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
+        <div>{{generatedAt}}</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="card">
+        <div class="card-title">备份群 <span class="hint">{{groupsCount}} 个</span></div>
+        <div class="block mono">{{groupsText}}</div>
+        <div class="mini">
+          主人：<span class="mono">#添加备份群123</span> / <span class="mono">#删除群备份 1</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">oplt <span class="hint">{{opltsCount}} 条</span></div>
+        <div class="block mono">{{opltsText}}</div>
+        <div class="mini">
+          主人：<span class="mono">#添加oplt A B</span> / <span class="mono">#删除oplt 1</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div>提示：序号以当前列表为准</div>
+      <div class="mono">#op帮助</div>
+    </div>
+  </div>
+</body>
+
+</html>
+
