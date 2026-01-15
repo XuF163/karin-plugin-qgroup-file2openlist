@@ -1,6 +1,8 @@
 import { karin, logger } from 'node-karin'
 import { backupOpenListToOpenListCore } from '@/model/openlist'
 import { handleGroupFileUploadedAutoBackup } from '@/model/groupFiles'
+import { buildActionCard, replyImages } from '@/model/ui/actionCard'
+import { config } from '@/utils'
 import { formatErrorMessage } from '@/model/shared/errors'
 import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
 
@@ -91,12 +93,68 @@ export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, a
   } = parseBackupOpenListArgs(argsText)
 
   if (help || !sourceBaseUrl) {
-    await e.reply(openListToOpenListHelpText)
+    try {
+      const img = await buildActionCard({
+        title: '备份oplist 帮助',
+        status: 'ok',
+        subtitle: '私聊 · 图片说明',
+        sections: [
+          {
+            title: '说明',
+            lines: openListToOpenListHelpText.split('\n').map((text) => ({
+              text,
+              mono: /(^|\s)#/.test(text),
+            })),
+          },
+        ],
+        footerRight: '#备份oplist',
+      })
+      await replyImages(e, img)
+    } catch (error) {
+      logger.error(error)
+      await e.reply(openListToOpenListHelpText)
+    }
     return true
   }
 
   try {
-    await backupOpenListToOpenListCore({
+    const cfg = config()
+    const targetBaseUrl = String(cfg.openlistBaseUrl ?? '').trim() || '-'
+
+    const startedAt = Date.now()
+    try {
+      const startCard = await buildActionCard({
+        title: '备份任务已启动',
+        status: 'ok',
+        subtitle: 'OpenList → OpenList（单次）',
+        sections: [
+          {
+            title: '执行信息',
+            rows: [
+              { k: '源', v: String(sourceBaseUrl), mono: true },
+              { k: '源目录', v: String(srcDir ?? '/'), mono: true },
+              { k: '目标', v: targetBaseUrl, mono: true },
+              { k: '目标目录', v: String(toDir ?? '(默认 openlistTargetDir)'), mono: true },
+              { k: 'mode', v: String(FIXED_BACKUP_MODE), mono: true },
+              { k: 'timeout', v: `${FIXED_TIMEOUT_SEC}s`, mono: true },
+              { k: 'transport', v: String(transport ?? 'auto'), mono: true },
+            ],
+          },
+          {
+            title: '提示',
+            lines: [
+              { text: '执行过程中不发送文本进度；完成后发送结果图。' },
+            ],
+          },
+        ],
+        footerRight: '#备份oplist',
+      })
+      await replyImages(e, startCard)
+    } catch (error) {
+      logger.error(error)
+    }
+
+    const res = await backupOpenListToOpenListCore({
       sourceBaseUrl,
       srcDir,
       toDir,
@@ -107,12 +165,62 @@ export const backupOpenListToOpenList = karin.command(/^#?备份oplist(.*)$/i, a
       perPage,
       mode: FIXED_BACKUP_MODE,
       transport,
-      report: (msg) => e.reply(msg),
     })
+
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+    try {
+      const doneCard = await buildActionCard({
+        title: '备份完成',
+        status: res.fail ? 'warn' : 'ok',
+        statusText: res.fail ? '部分失败' : '成功',
+        subtitle: 'OpenList → OpenList（单次）',
+        sections: [
+          {
+            title: '结果',
+            rows: [
+              { k: 'ok', v: String(res.ok), mono: true },
+              { k: 'skipped', v: String(res.skipped), mono: true },
+              { k: 'fail', v: String(res.fail), mono: true },
+              { k: '耗时', v: `${elapsed}s`, mono: true },
+            ],
+          },
+          {
+            title: '下一步',
+            lines: [
+              { text: '#我的备份', mono: true },
+            ],
+          },
+        ],
+        footerRight: '#备份oplist',
+      })
+      await replyImages(e, doneCard)
+    } catch (error) {
+      logger.error(error)
+      await e.reply(`备份完成：成功 ${res.ok}，跳过 ${res.skipped}，失败 ${res.fail}`)
+    }
     return true
   } catch (error: any) {
     logger.error(error)
-    await e.reply(formatErrorMessage(error))
+    const msg = formatErrorMessage(error)
+    try {
+      const errCard = await buildActionCard({
+        title: '备份失败',
+        status: 'bad',
+        statusText: '异常',
+        subtitle: 'OpenList → OpenList（单次）',
+        sections: [
+          {
+            title: '错误',
+            lines: [{ text: msg }],
+          },
+        ],
+        footerRight: '#备份oplist',
+      })
+      await replyImages(e, errCard)
+    } catch (renderError) {
+      logger.error(renderError)
+      await e.reply(msg)
+    }
     return true
   }
 }, {

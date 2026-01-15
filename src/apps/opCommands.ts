@@ -14,6 +14,7 @@ import {
 } from '@/model/oplt'
 import { formatErrorMessage } from '@/model/shared/errors'
 import { readJsonSafe, writeJsonSafe } from '@/model/shared/fsJson'
+import { buildActionCard, replyImages } from '@/model/ui/actionCard'
 import { karin, logger, render, segment } from 'node-karin'
 import type { OpenListBackupTransport, SyncMode } from '@/model/groupFiles/types'
 
@@ -479,12 +480,53 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
   const data = readOpltData()
   const user = withOpltUser(data, userKey)
   if (!user.oplts.length) {
-    await e.reply('oplt 列表为空：先用 #添加oplt <A> <B> 添加，再用 #我的备份 查看。')
+    try {
+      const img = await buildActionCard({
+        title: 'oplt 列表为空',
+        status: 'warn',
+        statusText: 'empty',
+        subtitle: '私聊 · oplts 备份',
+        sections: [
+          {
+            title: '提示',
+            lines: [
+              { text: '#添加oplt <A> <B>', mono: true },
+              { text: '#我的备份', mono: true },
+            ],
+          },
+        ],
+        footerRight: '#oplt备份',
+      })
+      await replyImages(e, img)
+    } catch (error) {
+      logger.error(error)
+      await e.reply('oplt 列表为空：先用 #添加oplt <A> <B> 添加，再用 #我的备份 查看。')
+    }
     return true
   }
 
   if (help || selection == null) {
-    await e.reply(opltsBackupHelpText)
+    try {
+      const img = await buildActionCard({
+        title: 'oplt备份 帮助',
+        status: 'ok',
+        subtitle: '私聊 · 图片说明',
+        sections: [
+          {
+            title: '用法',
+            lines: opltsBackupHelpText.split('\n').map((text) => ({
+              text,
+              mono: /(^|\s)#/.test(text),
+            })),
+          },
+        ],
+        footerRight: '#oplt备份',
+      })
+      await replyImages(e, img)
+    } catch (error) {
+      logger.error(error)
+      await e.reply(opltsBackupHelpText)
+    }
     return true
   }
 
@@ -493,34 +535,90 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
     : [{ index: selection, it: user.oplts[selection - 1] }].filter((x) => Boolean(x.it))
 
   if (!list.length) {
-    await e.reply(`序号超出范围：${String(selection)}\n提示：先用 #我的备份 查看序号`)
+    try {
+      const img = await buildActionCard({
+        title: '序号超出范围',
+        status: 'warn',
+        statusText: 'invalid',
+        subtitle: '私聊 · oplts 备份',
+        sections: [
+          {
+            title: '提示',
+            lines: [
+              { text: `输入：${String(selection)}`, mono: true },
+              { text: '#我的备份', mono: true },
+            ],
+          },
+        ],
+        footerRight: '#oplt备份',
+      })
+      await replyImages(e, img)
+    } catch (error) {
+      logger.error(error)
+      await e.reply(`序号超出范围：${String(selection)}\n提示：先用 #我的备份 查看序号`)
+    }
     return true
   }
 
   const finalAppendHostDir = typeof appendHostDir === 'boolean' ? appendHostDir : false
   const effectiveTransport: OpenListBackupTransport = transport ?? 'auto'
 
-  await e.reply([
-    '开始执行 oplts 备份：',
-    `- 条目：${selection === 'all' ? `全部（${list.length}）` : String(selection)}`,
-    `- mode：${FIXED_BACKUP_MODE}`,
-    `- timeout：${FIXED_BACKUP_TIMEOUT_SEC}s`,
-    `- transport：${effectiveTransport}`,
-    `- appendHostDir：${finalAppendHostDir ? 'on' : 'off'}`,
-  ].join('\n'))
+  const cfg = config()
+  const targetBaseUrl = String(cfg.openlistBaseUrl ?? '').trim() || '-'
+  const itemLines = list.map(({ index, it }) => {
+    try {
+      const { sourceBaseUrl, srcDir, toDir } = resolveOpltMapping({ left: it.left, right: it.right })
+      const src = `${sourceBaseUrl}${srcDir === '/' ? '' : srcDir}`
+      return { text: `#${index} ${src} -> ${toDir}`, mono: true }
+    } catch {
+      return { text: `#${index} ${it.left} -> ${it.right}`, mono: true }
+    }
+  })
+
+  try {
+    const startCard = await buildActionCard({
+      title: '备份任务已启动',
+      status: 'ok',
+      subtitle: 'oplt（OpenList → OpenList）',
+      sections: [
+        {
+          title: '执行信息',
+          rows: [
+            { k: '条目', v: selection === 'all' ? `全部（${list.length}）` : String(selection), mono: true },
+            { k: '目标端', v: targetBaseUrl, mono: true },
+            { k: 'mode', v: String(FIXED_BACKUP_MODE), mono: true },
+            { k: 'timeout', v: `${FIXED_BACKUP_TIMEOUT_SEC}s`, mono: true },
+            { k: 'transport', v: String(effectiveTransport), mono: true },
+            { k: 'hostDir', v: finalAppendHostDir ? 'on' : 'off', mono: true },
+          ],
+        },
+        {
+          title: '条目列表',
+          lines: itemLines,
+        },
+        {
+          title: '提示',
+          lines: [
+            { text: '执行过程中不发送文本进度；完成后发送结果图。' },
+          ],
+        },
+      ],
+      footerRight: '#oplt备份',
+    })
+    await replyImages(e, startCard)
+  } catch (error) {
+    logger.error(error)
+  }
 
   let sumOk = 0
   let sumSkipped = 0
   let sumFail = 0
+  const startedAt = Date.now()
+  const itemResults: Array<{ index: number, ok?: number, skipped?: number, fail?: number, error?: string }> = []
 
   for (const { index, it } of list) {
     try {
       const { sourceBaseUrl, srcDir, toDir } = resolveOpltMapping({ left: it.left, right: it.right })
-      await e.reply([
-        `【oplt ${index}】`,
-        `源：${sourceBaseUrl}${srcDir === '/' ? '' : srcDir}`,
-        `目标：${toDir}`,
-      ].join('\n'))
 
       const res = await backupOpenListToOpenListCore({
         sourceBaseUrl,
@@ -532,20 +630,68 @@ export const opltsBackup = karin.command(/^#?oplt备份(.*)$/i, async (e) => {
         transport: effectiveTransport,
         appendHostDir: finalAppendHostDir,
         timeoutSec: FIXED_BACKUP_TIMEOUT_SEC,
-        report: (msg) => e.reply(`【oplt ${index}】${msg}`),
       })
 
       sumOk += res.ok
       sumSkipped += res.skipped
       sumFail += res.fail
+      itemResults.push({ index, ok: res.ok, skipped: res.skipped, fail: res.fail })
     } catch (error: any) {
       logger.error(error)
-      await e.reply(`【oplt ${index}】失败：${formatErrorMessage(error)}`)
       sumFail += 1
+      itemResults.push({ index, error: formatErrorMessage(error) })
     }
   }
 
-  await e.reply(`oplt 备份完成：成功 ${sumOk}，跳过 ${sumSkipped}，失败 ${sumFail}`)
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  const detailLines = itemResults
+    .sort((a, b) => a.index - b.index)
+    .map((it) => {
+      if (it.error) return { text: `#${it.index} FAIL: ${it.error}`, mono: false }
+      return { text: `#${it.index} ok=${it.ok ?? 0} skip=${it.skipped ?? 0} fail=${it.fail ?? 0}`, mono: true }
+    })
+
+  const status: 'ok' | 'warn' | 'bad' = sumFail
+    ? ((sumOk || sumSkipped) ? 'warn' : 'bad')
+    : 'ok'
+  const statusText = sumFail
+    ? ((sumOk || sumSkipped) ? '部分失败' : '失败')
+    : '成功'
+
+  try {
+    const doneCard = await buildActionCard({
+      title: '备份完成',
+      status,
+      statusText,
+      subtitle: 'oplt（OpenList → OpenList）',
+      sections: [
+        {
+          title: '结果',
+          rows: [
+            { k: 'ok', v: String(sumOk), mono: true },
+            { k: 'skipped', v: String(sumSkipped), mono: true },
+            { k: 'fail', v: String(sumFail), mono: true },
+            { k: '耗时', v: `${elapsed}s`, mono: true },
+          ],
+        },
+        {
+          title: '条目明细',
+          lines: detailLines,
+        },
+        {
+          title: '下一步',
+          lines: [
+            { text: '#我的备份', mono: true },
+          ],
+        },
+      ],
+      footerRight: '#oplt备份',
+    })
+    await replyImages(e, doneCard)
+  } catch (error) {
+    logger.error(error)
+    await e.reply(`oplt 备份完成：成功 ${sumOk}，跳过 ${sumSkipped}，失败 ${sumFail}`)
+  }
   return true
 }, {
   priority: 9999,

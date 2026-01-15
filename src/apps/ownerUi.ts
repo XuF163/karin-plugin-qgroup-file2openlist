@@ -877,7 +877,7 @@ export const opForward = karin.command(/^#?op转发(.*)$/i, async (e) => {
         {
           title: '提示',
           lines: [
-            { text: '执行过程中会有少量文本进度提示；结束后会发送图片总结。' },
+            { text: '执行过程中不发送文本进度；结束后会发送图片总结。' },
           ],
         },
       ],
@@ -889,7 +889,6 @@ export const opForward = karin.command(/^#?op转发(.*)$/i, async (e) => {
       const result = await runOpenListForwardRule({
         rule,
         mode: forcedMode,
-        report: (msg) => e.reply(msg),
       })
 
       const doneCard = await buildActionCard({
