@@ -9,16 +9,36 @@
     :root {
       --w: 540px;
       --h: 960px;
-      --bg: #0b1020;
-      --fg: #0b1220;
-      --muted: #64748b;
       --card: rgba(255, 255, 255, 0.92);
+      --soft: rgba(15, 23, 42, 0.06);
+      --soft2: rgba(15, 23, 42, 0.04);
       --stroke: rgba(15, 23, 42, 0.12);
-      --soft: rgba(15, 23, 42, 0.05);
+      --stroke2: rgba(15, 23, 42, 0.10);
+
+      --text: #0b1220;
+      --muted: #475569;
+      --muted2: #64748b;
+
+      --accent: #2563eb;
+      --accent2: #06b6d4;
+
+      --radius-lg: 18px;
+      --radius-md: 14px;
+
+      --shadow:
+        0 14px 30px rgba(2, 6, 23, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+
+      --shadow-card:
+        0 12px 26px rgba(2, 6, 23, 0.07),
+        0 1px 0 rgba(255, 255, 255, 0.6) inset;
     }
 
     * {
       box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: geometricPrecision;
     }
 
     html,
@@ -32,53 +52,94 @@
         radial-gradient(720px 720px at 92% 0%, rgba(14, 165, 233, 0.14), transparent 54%),
         radial-gradient(720px 720px at 78% 96%, rgba(34, 197, 94, 0.10), transparent 56%),
         linear-gradient(140deg, #f8fafc, #eef2ff 38%, #f1f5f9);
-      color: var(--fg);
+      color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      text-rendering: geometricPrecision;
     }
 
     .wrap {
       width: 100%;
       height: 100%;
-      padding: 22px 20px 18px;
+      padding: 18px 18px 14px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
     }
 
     .header {
       display: grid;
       grid-template-columns: 1fr;
       gap: 10px;
-      padding: 18px 18px 16px;
+      position: relative;
+      isolation: isolate;
+      padding: 16px 16px 14px;
       border: 1px solid var(--stroke);
       background: var(--card);
-      border-radius: 18px;
-      box-shadow:
-        0 14px 30px rgba(2, 6, 23, 0.08),
-        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+    }
+
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      border-radius: inherit;
+      background:
+        radial-gradient(520px 160px at 0% 0%, rgba(37, 99, 235, 0.14), transparent 62%),
+        radial-gradient(520px 160px at 100% 0%, rgba(34, 197, 94, 0.10), transparent 62%);
+      pointer-events: none;
+    }
+
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      top: 0;
+      height: 6px;
+      z-index: 1;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(37, 99, 235, 0.95), rgba(6, 182, 212, 0.90), rgba(34, 197, 94, 0.88));
+      opacity: 0.95;
+    }
+
+    .header>* {
+      position: relative;
+      z-index: 2;
     }
 
     .title {
-      font-size: 34px;
+      font-size: 32px;
       font-weight: 900;
       letter-spacing: 0.2px;
       line-height: 1.1;
     }
 
     .subtitle {
-      margin-top: 6px;
+      margin-top: 4px;
       color: var(--muted);
-      font-size: 14px;
-      line-height: 1.45;
+      font-size: 13px;
+      line-height: 1.4;
     }
 
     .meta {
       text-align: left;
       color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .meta>div {
+      white-space: nowrap;
+    }
+
+    .meta-name {
+      display: inline-block;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: bottom;
     }
 
     .mono {
@@ -88,8 +149,8 @@
     .badge {
       display: inline-block;
       padding: 4px 10px;
-      border: 1px solid var(--stroke);
-      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid var(--stroke2);
+      background: rgba(37, 99, 235, 0.08);
       color: #0b1220;
       border-radius: 999px;
       font-weight: 700;
@@ -98,18 +159,16 @@
     .content {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       flex: 1;
     }
 
     .card {
-      padding: 16px 18px;
+      padding: 12px 14px;
       border: 1px solid var(--stroke);
       background: var(--card);
-      border-radius: 18px;
-      box-shadow:
-        0 12px 26px rgba(2, 6, 23, 0.07),
-        0 1px 0 rgba(255, 255, 255, 0.6) inset;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
     }
 
     .card-title {
@@ -118,68 +177,107 @@
       justify-content: space-between;
       gap: 10px;
       font-weight: 900;
-      font-size: 16px;
-      margin: 0 0 12px 0;
+      font-size: 15px;
+      margin: 0 0 8px 0;
     }
 
     .hint {
-      color: var(--muted);
+      color: var(--muted2);
       font-size: 12px;
       font-weight: 700;
     }
 
     .cmds {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 10px;
     }
 
     .cmd {
       display: grid;
       grid-template-columns: 1fr;
       gap: 6px;
-      padding: 12px 12px;
-      border-radius: 14px;
-      border: 1px solid rgba(15, 23, 42, 0.10);
-      background: var(--soft);
+      position: relative;
+      padding: 8px 12px 8px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--stroke2);
+      background: var(--soft2);
+      box-shadow: 0 8px 16px rgba(2, 6, 23, 0.05);
+    }
+
+    .cmd.wide {
+      grid-column: 1 / -1;
+    }
+
+    .cmd::before {
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.65), rgba(6, 182, 212, 0.22), rgba(34, 197, 94, 0.42));
+      opacity: 0.65;
     }
 
     .cmd-key {
       font-weight: 900;
-      font-size: 16px;
+      font-size: 12px;
       white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: rgba(255, 255, 255, 0.70);
     }
 
     .cmd-desc {
       color: #0b1220;
-      font-size: 15px;
-      line-height: 1.5;
+      font-size: 13px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .cmd-desc .mono,
+    .tip .mono {
+      display: inline-block;
+      padding: 2px 5px;
+      border-radius: 10px;
+      border: 1px solid rgba(15, 23, 42, 0.10);
+      background: rgba(255, 255, 255, 0.65);
+      color: #0b1220;
+      font-weight: 800;
+      font-size: 12px;
+      line-height: 1.3;
     }
 
     .tips {
       margin: 0;
       padding: 0;
       list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 14px;
     }
 
     .tip {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: flex-start;
       color: #334155;
-      font-size: 14px;
-      line-height: 1.45;
+      font-size: 13px;
+      line-height: 1.4;
     }
 
     .dot {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 999px;
-      background: rgba(15, 23, 42, 0.72);
-      margin-top: 6px;
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.85), rgba(6, 182, 212, 0.55), rgba(34, 197, 94, 0.75));
+      margin-top: 5px;
       flex: 0 0 auto;
     }
 
@@ -214,7 +312,7 @@
         <div class="subtitle">竖版指令卡（更适合手机阅读）</div>
       </div>
       <div class="meta">
-        <div>插件：<span class="mono">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
+        <div>插件：<span class="mono meta-name">{{name}}</span> <span class="badge mono">v{{version}}</span></div>
         <div>{{generatedAt}}</div>
       </div>
     </div>
@@ -239,11 +337,11 @@
             <div class="cmd-key mono">#导出群文件</div>
             <div class="cmd-desc">导出群文件列表（可用于排查缺失/重复）。</div>
           </div>
-          <div class="cmd">
+          <div class="cmd wide">
             <div class="cmd-key mono">#我的备份</div>
             <div class="cmd-desc">
               查看备份群（uploadBackup=on）和 oplts 列表。<br />
-              主人管理：<span class="mono">#添加备份群123</span> / <span class="mono">#删除群备份 1</span> / <span class="mono">#添加oplt
+              主人管理：<span class="mono">#添加备份群 123</span> / <span class="mono">#删除群备份 1</span> / <span class="mono">#添加oplt
                 A B</span> / <span class="mono">#删除oplt 1</span> / <span class="mono">#oplt备份 1</span> / <span
                 class="mono">#oplt夜间 查看</span> / <span class="mono">#op帮助</span>
             </div>

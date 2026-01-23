@@ -153,7 +153,7 @@ export const myBackup = karin.command(/^#?我的备份(\s+.*)?$/i, async (e) => 
   })()
 
   const groupsText = (() => {
-    if (!groups.length) return '（空）\n可用：#添加备份群123'
+    if (!groups.length) return '（空）\n可用：#添加备份群 123'
     const lines: string[] = []
     const baseTargetDir = normalizePosixPath(String(cfg.openlistTargetDir ?? '/'))
     const preview = groups.slice(0, groupsPreviewLimit)
@@ -256,7 +256,7 @@ export const addBackupGroup = karin.command(/^#?添加备份群(.*)$/i, async (e
   const rest = String(e.msg ?? '').replace(/^#?添加备份群/i, '').trim()
   const groupId = rest.match(/\d+/)?.[0]
   if (!groupId) {
-    await e.reply('用法：#添加备份群<群号>\n示例：#添加备份群123456')
+    await e.reply('用法：#添加备份群 <群号>\n示例：#添加备份群 123456')
     return true
   }
 
