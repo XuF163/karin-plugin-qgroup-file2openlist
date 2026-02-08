@@ -1,4 +1,10 @@
-# Karin TypeScript 插件开发模板
+# Karin Oplist Plugin  
+
+省流：群文件自动备份、网盘自动备份
+```
+pnpm add  karin-plugin-qgroup-file2openlist -w  
+pnpm install  
+```
 
 ## 📖 目录
 
