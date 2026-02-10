@@ -10,7 +10,7 @@ import {
   buildOpenListDavBaseUrl,
   createWebDavDirEnsurer,
   downloadAndUploadByWebDav,
-  webdavPropfindListNames,
+  webdavHeadExists,
 } from '@/model/openlist'
 import type { ExportError, ExportedGroupFile, GroupFileSyncStateV1, SyncMode } from './types'
 import { collectAllGroupFiles, resolveGroupFileUrl } from './qgroup'
@@ -158,28 +158,23 @@ export const syncGroupFilesToOpenListCore = async (params: {
         })
       : candidates
 
-    // 增量同步：额外检查 OpenList 目标目录是否已存在同名文件，存在则跳过
+    // 增量同步：额外检查 OpenList 目标端是否已存在同路径文件（HEAD）。
+    // - 相比 PROPFIND：避免目录文件过多时响应体过大导致内存飙升
+    // - 代价：每个文件一个 HEAD 请求（可通过 state + 并发控制减轻）
     if (mode === 'incremental' && needSync.length) {
-      const dirs = Array.from(new Set(
-        needSync.map(({ remotePath }) => normalizePosixPath(path.posix.dirname(remotePath))),
-      ))
-
-      const namesByDir = new Map<string, Set<string>>()
-      await runWithConcurrency(dirs, 3, async (dirPath) => {
-        const names = await webdavPropfindListNames({
+      const existsResults = new Array<boolean>(needSync.length).fill(false)
+      const existsConcurrency = 10
+      await runWithConcurrency(needSync, existsConcurrency, async ({ remotePath }, index) => {
+        existsResults[index] = await webdavHeadExists({
           davBaseUrl,
           auth,
-          dirPath,
+          filePath: remotePath,
           timeoutMs: webdavTimeoutMs,
         })
-        namesByDir.set(dirPath, names)
       })
 
-      needSync = needSync.filter(({ remotePath }) => {
-        const dirPath = normalizePosixPath(path.posix.dirname(remotePath))
-        const base = path.posix.basename(remotePath)
-        const names = namesByDir.get(dirPath)
-        if (names && names.has(base)) {
+      needSync = needSync.filter((_it, index) => {
+        if (existsResults[index]) {
           skipped++
           return false
         }

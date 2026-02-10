@@ -3,7 +3,7 @@ import { Readable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createThrottleTransform } from '@/model/shared/rateLimit'
 import { encodePathForUrl, normalizePosixPath } from '@/model/shared/path'
-import { fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
+import { drainResponseBody, fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
 import { withGlobalTransferLimit } from '@/model/shared/transferLimiter'
 import { createTransferTempFilePath, parseContentLengthHeader, safeUnlink, shouldSpoolToDisk, streamToFile } from '@/model/shared/transferSpool'
 import { logger } from 'node-karin'
@@ -46,7 +46,12 @@ export const webdavPropfindListNames = async (params: {
       signal: controller.signal,
     })
 
-    if (!res.ok) return new Set<string>()
+    if (!res.ok) {
+      try {
+        await res.body?.cancel()
+      } catch {}
+      return new Set<string>()
+    }
     // PROPFIND 响应可能很长（目录文件较多时），这里不能截断，否则会导致“已存在文件”判断失效
     const text = await res.text()
     if (!text) return new Set<string>()
@@ -106,7 +111,12 @@ export const webdavPropfindListEntries = async (params: {
       signal: controller.signal,
     })
 
-    if (!res.ok) return [] as WebDavEntry[]
+    if (!res.ok) {
+      try {
+        await res.body?.cancel()
+      } catch {}
+      return [] as WebDavEntry[]
+    }
     const text = await res.text()
     if (!text) return [] as WebDavEntry[]
 
@@ -185,6 +195,7 @@ export const copyWebDavToWebDav = async (params: {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let tmpFilePath: string | undefined
+    let uploadFileStream: fs.ReadStream | undefined
 
     try {
       const sourceUrl = `${sourceDavBaseUrl}${encodePathForUrl(sourcePath)}`
@@ -229,7 +240,8 @@ export const copyWebDavToWebDav = async (params: {
           await streamToFile(Readable.fromWeb(downloadRes.body as any), tmpFilePath, { signal: controller.signal })
           const stat = await fs.promises.stat(tmpFilePath)
           headers['Content-Length'] = String(stat.size)
-          body = fs.createReadStream(tmpFilePath) as any
+          uploadFileStream = fs.createReadStream(tmpFilePath)
+          body = uploadFileStream as any
         } else {
           body = Readable.fromWeb(downloadRes.body as any)
         }
@@ -252,6 +264,8 @@ export const copyWebDavToWebDav = async (params: {
         const body = await fetchTextSafely(putRes)
         throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
       }
+
+      await drainResponseBody(putRes)
     } catch (error) {
       try {
         controller.abort()
@@ -259,6 +273,15 @@ export const copyWebDavToWebDav = async (params: {
       throw error
     } finally {
       clearTimeout(timer)
+      if (uploadFileStream) {
+        await new Promise<void>((resolve) => {
+          try {
+            uploadFileStream.close(() => resolve())
+          } catch {
+            resolve()
+          }
+        })
+      }
       if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })
@@ -307,6 +330,8 @@ export const createWebDavDirEnsurer = (davBaseUrl: string, auth: string, timeout
             const body = await fetchTextSafely(res)
             throw new Error(`MKCOL 失败: ${current} -> ${res.status} ${res.statusText}${body ? ` - ${body}` : ''}`)
           }
+
+          await drainResponseBody(res)
         } finally {
           clearTimeout(timer)
         }
@@ -340,6 +365,7 @@ export const downloadAndUploadByWebDav = async (params: {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let tmpFilePath: string | undefined
+    let uploadFileStream: fs.ReadStream | undefined
 
     try {
       let downloadRes: Response
@@ -383,7 +409,8 @@ export const downloadAndUploadByWebDav = async (params: {
           const stat = await fs.promises.stat(tmpFilePath)
           headers['Content-Length'] = String(stat.size)
 
-          bodyStream = fs.createReadStream(tmpFilePath) as any
+          uploadFileStream = fs.createReadStream(tmpFilePath)
+          bodyStream = uploadFileStream as any
         } else {
           bodyStream = Readable.fromWeb(downloadRes.body as any)
         }
@@ -414,6 +441,8 @@ export const downloadAndUploadByWebDav = async (params: {
           : ''
         throw new Error(`上传失败: ${putRes.status} ${putRes.statusText}${hint}${body ? ` - ${body}` : ''}`)
       }
+
+      await drainResponseBody(putRes)
     } catch (error) {
       try {
         controller.abort()
@@ -421,6 +450,15 @@ export const downloadAndUploadByWebDav = async (params: {
       throw error
     } finally {
       clearTimeout(timer)
+      if (uploadFileStream) {
+        await new Promise<void>((resolve) => {
+          try {
+            uploadFileStream.close(() => resolve())
+          } catch {
+            resolve()
+          }
+        })
+      }
       if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })

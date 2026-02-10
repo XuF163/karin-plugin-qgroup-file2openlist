@@ -285,6 +285,7 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let tmpFilePath: string | undefined
+    let uploadFileStream: fs.ReadStream | undefined
 
     try {
       let downloadRes: Response
@@ -329,7 +330,8 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
           await streamToFile(Readable.fromWeb(downloadRes.body as any), tmpFilePath, { signal: controller.signal })
           const stat = await fs.promises.stat(tmpFilePath)
           headers['Content-Length'] = String(stat.size)
-          body = fs.createReadStream(tmpFilePath) as any
+          uploadFileStream = fs.createReadStream(tmpFilePath)
+          body = uploadFileStream as any
         } else {
           body = Readable.fromWeb(downloadRes.body as any)
         }
@@ -365,6 +367,15 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
       throw error
     } finally {
       clearTimeout(timer)
+      if (uploadFileStream) {
+        await new Promise<void>((resolve) => {
+          try {
+            uploadFileStream.close(() => resolve())
+          } catch {
+            resolve()
+          }
+        })
+      }
       if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })

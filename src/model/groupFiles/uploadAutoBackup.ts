@@ -121,13 +121,20 @@ export const handleGroupFileUploadedAutoBackup = (e: any) => {
         if (normalized) item.path = normalized
 
         const bot = (e as any)?.bot
-        if (bot && !item.path.includes('/')) {
+        const resolvePathEnabled = typeof (targetCfg as any)?.uploadBackupResolvePath === 'boolean'
+          ? Boolean((targetCfg as any).uploadBackupResolvePath)
+          : true
+        const resolvePathMaxFolders = typeof (targetCfg as any)?.uploadBackupResolvePathMaxFolders === 'number'
+          ? Math.max(1, Math.floor(Number((targetCfg as any).uploadBackupResolvePathMaxFolders)) || 1)
+          : 4000
+
+        if (resolvePathEnabled && bot && !item.path.includes('/')) {
           try {
             const found = await locateGroupFileByIdWithRetry(bot, groupId, fid, {
               retries: 3,
               delayMs: 1200,
               timeoutMs: 15_000,
-              maxFolders: 4000,
+              maxFolders: resolvePathMaxFolders,
               expectedName: name,
               expectedSize: size,
             })
@@ -139,6 +146,8 @@ export const handleGroupFileUploadedAutoBackup = (e: any) => {
           } catch (error) {
             logger.debug(`[群上传备份][${groupId}] 获取群内文件路径失败，将退化为根目录: ${formatErrorMessage(error)}`)
           }
+        } else if (!resolvePathEnabled && bot && !item.path.includes('/')) {
+          logger.debug(`[群上传备份][${groupId}] uploadBackupResolvePath=false，已跳过群文件夹路径解析：${name}`)
         }
       }
 

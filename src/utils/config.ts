@@ -110,6 +110,17 @@ export interface Config {
 
     /** 监听群文件上传并自动备份到 OpenList */
     uploadBackup?: boolean
+    /**
+     * 上传自动备份：是否尝试解析群文件夹路径（需要扫描群文件夹树，可能较耗资源）
+     * - true：尽量保留目录结构（默认）
+     * - false：若事件未提供 path/fullPath，则退化备份到群根目录（仅文件名）
+     */
+    uploadBackupResolvePath?: boolean
+    /**
+     * 上传自动备份：解析路径时扫描的最大文件夹数（默认 4000）
+     * - 数值越大越可能找到正确路径，但越耗时/耗资源
+     */
+    uploadBackupResolvePathMaxFolders?: number
 
     /** 同步时段控制（仅用于定时任务/自动同步），例：00:00-06:00,23:00-23:59；空=不限制 */
     timeWindows?: string
