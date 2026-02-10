@@ -172,7 +172,51 @@ export const webdavHeadExists = async (params: {
       redirect: 'follow',
       signal: controller.signal,
     })
-    return res.ok
+
+    // 部分 WebDAV 可能不支持 HEAD（405/501），此时降级使用 PROPFIND(Depth:0) 判断存在性
+    if (res.ok) return true
+    if (res.status === 404) return false
+
+    if (res.status === 405 || res.status === 501) {
+      try {
+        await res.body?.cancel()
+      } catch {}
+
+      const body = `<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:resourcetype />
+  </d:prop>
+</d:propfind>`
+
+      const fallback = await fetch(url, {
+        method: 'PROPFIND',
+        headers: {
+          Authorization: auth,
+          Depth: '0',
+          'Content-Type': 'application/xml; charset=utf-8',
+        },
+        body,
+        redirect: 'follow',
+        signal: controller.signal,
+      })
+
+      if (fallback.ok) {
+        try {
+          await fallback.body?.cancel()
+        } catch {}
+        return true
+      }
+      try {
+        await fallback.body?.cancel()
+      } catch {}
+      return false
+    }
+
+    try {
+      await res.body?.cancel()
+    } catch {}
+    return false
   } catch {
     return false
   } finally {
