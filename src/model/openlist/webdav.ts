@@ -76,6 +76,9 @@ export const webdavPropfindListNames = async (params: {
 
 export type WebDavEntry = { name: string, isDir: boolean }
 
+type ExistsCheckMode = 'head' | 'propfind'
+const existsCheckModeByDavBaseUrl = new Map<string, ExistsCheckMode>()
+
 export const webdavPropfindListEntries = async (params: {
   davBaseUrl: string
   auth?: string
@@ -164,8 +167,53 @@ export const webdavHeadExists = async (params: {
   const { davBaseUrl, auth, filePath, timeoutMs } = params
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  const propfindExists = async () => {
+    const url = `${davBaseUrl}${encodePathForUrl(filePath)}`
+    const body = `<?xml version="1.0" encoding="utf-8" ?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:resourcetype />
+  </d:prop>
+</d:propfind>`
+
+    const res = await fetch(url, {
+      method: 'PROPFIND',
+      headers: {
+        Authorization: auth,
+        Depth: '0',
+        'Content-Type': 'application/xml; charset=utf-8',
+      },
+      body,
+      redirect: 'follow',
+      signal: controller.signal,
+    })
+
+    if (res.ok) {
+      try {
+        await res.body?.cancel()
+      } catch {}
+      return true
+    }
+
+    try {
+      await res.body?.cancel()
+    } catch {}
+    return false
+  }
+
+  // 一些 WebDAV（含 OpenList 某些配置）对 HEAD 的行为不可靠（可能固定返回 403），
+  // 这里做一个“按 davBaseUrl 缓存”的存在性检查策略，避免每个文件都 HEAD + PROPFIND 两次请求。
+  const key = davBaseUrl
+  const mode: ExistsCheckMode = existsCheckModeByDavBaseUrl.get(key) ?? 'head'
+
   try {
     const url = `${davBaseUrl}${encodePathForUrl(filePath)}`
+
+    if (mode === 'propfind') {
+      return await propfindExists()
+    }
+
     const res = await fetch(url, {
       method: 'HEAD',
       headers: { Authorization: auth },
@@ -173,50 +221,33 @@ export const webdavHeadExists = async (params: {
       signal: controller.signal,
     })
 
-    // 部分 WebDAV 可能不支持 HEAD（405/501），此时降级使用 PROPFIND(Depth:0) 判断存在性
-    if (res.ok) return true
-    if (res.status === 404) return false
-
-    if (res.status === 405 || res.status === 501) {
+    if (res.ok) {
       try {
         await res.body?.cancel()
       } catch {}
-
-      const body = `<?xml version="1.0" encoding="utf-8" ?>
-<d:propfind xmlns:d="DAV:">
-  <d:prop>
-    <d:resourcetype />
-  </d:prop>
-</d:propfind>`
-
-      const fallback = await fetch(url, {
-        method: 'PROPFIND',
-        headers: {
-          Authorization: auth,
-          Depth: '0',
-          'Content-Type': 'application/xml; charset=utf-8',
-        },
-        body,
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-
-      if (fallback.ok) {
-        try {
-          await fallback.body?.cancel()
-        } catch {}
-        return true
-      }
+      return true
+    }
+    if (res.status === 404) {
       try {
-        await fallback.body?.cancel()
+        await res.body?.cancel()
       } catch {}
       return false
+    }
+
+    // 观察到某些 OpenList WebDAV：存在文件 HEAD=403，但 PROPFIND=207；因此对这类状态直接切换为 PROPFIND 存在性判断
+    if (res.status === 403 || res.status === 405 || res.status === 501) {
+      try {
+        await res.body?.cancel()
+      } catch {}
+      const ok = await propfindExists()
+      existsCheckModeByDavBaseUrl.set(key, 'propfind')
+      return ok
     }
 
     try {
       await res.body?.cancel()
     } catch {}
-    return false
+    return await propfindExists()
   } catch {
     return false
   } finally {
