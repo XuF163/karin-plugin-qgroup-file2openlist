@@ -4,6 +4,9 @@
   "openlistUsername": "",
   "openlistPassword": "",
   "openlistTargetDir": "/",
+  "resourceLimits": {
+    "transferConcurrency": 1
+  },
   "groupSyncDefaults": {
     "mode": "incremental",
     "flat": false,

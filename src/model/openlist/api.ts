@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { buildOpenListApiBaseUrl } from './url'
 import { normalizePosixPath } from '@/model/shared/path'
 import { fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
+import { withGlobalTransferLimit } from '@/model/shared/transferLimiter'
 
 export type OpenListApiResponse<T = unknown> = {
   code?: number
@@ -275,69 +276,71 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
   const apiBaseUrl = buildOpenListApiBaseUrl(targetBaseUrl)
   if (!apiBaseUrl) throw new Error('目标 OpenList API 地址不正确，请检查目标 OpenList 地址')
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  await withGlobalTransferLimit(`downloadAndUploadByOpenListApiPut:${targetPath}`, async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  try {
-    let downloadRes: Response
     try {
-      downloadRes = await fetch(sourceUrl, {
-        headers: sourceHeaders,
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('源端读取超时')
-      throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
-    }
+      let downloadRes: Response
+      try {
+        downloadRes = await fetch(sourceUrl, {
+          headers: sourceHeaders,
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('源端读取超时')
+        throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
+      }
 
-    if (!downloadRes.ok) {
-      const body = await fetchTextSafely(downloadRes)
-      throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
-    }
-    if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
+      if (!downloadRes.ok) {
+        const body = await fetchTextSafely(downloadRes)
+        throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
+      }
+      if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
 
-    const headers: Record<string, string> = {
-      'File-Path': encodeURIComponent(normalizePosixPath(targetPath)),
-    }
-    const authToken = String(targetToken ?? '').trim()
-    if (authToken) headers.Authorization = authToken
-    const contentType = downloadRes.headers.get('content-type')
-    const contentLength = downloadRes.headers.get('content-length')
-    if (contentType) headers['Content-Type'] = contentType
-    if (contentLength) headers['Content-Length'] = contentLength
+      const headers: Record<string, string> = {
+        'File-Path': encodeURIComponent(normalizePosixPath(targetPath)),
+      }
+      const authToken = String(targetToken ?? '').trim()
+      if (authToken) headers.Authorization = authToken
+      const contentType = downloadRes.headers.get('content-type')
+      const contentLength = downloadRes.headers.get('content-length')
+      if (contentType) headers['Content-Type'] = contentType
+      if (contentLength) headers['Content-Length'] = contentLength
 
-    const sourceStream = Readable.fromWeb(downloadRes.body as any)
+      const sourceStream = Readable.fromWeb(downloadRes.body as any)
 
-    let putRes: Response
-    try {
-      putRes = await fetch(`${apiBaseUrl}/fs/put`, {
-        method: 'PUT',
-        headers,
-        body: sourceStream as any,
-        // @ts-expect-error Node fetch streaming body requires duplex
-        duplex: 'half',
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端 OpenList 连接/权限）')
-      throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
-    }
+      let putRes: Response
+      try {
+        putRes = await fetch(`${apiBaseUrl}/fs/put`, {
+          method: 'PUT',
+          headers,
+          body: sourceStream as any,
+          // @ts-expect-error Node fetch streaming body requires duplex
+          duplex: 'half',
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端 OpenList 连接/权限）')
+        throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
+      }
 
-    if (!putRes.ok) {
-      const body = await fetchTextSafely(putRes)
-      throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
-    }
+      if (!putRes.ok) {
+        const body = await fetchTextSafely(putRes)
+        throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
+      }
 
-    const json = await openlistApiReadJson(putRes)
-    if (typeof json?.code === 'number' && json.code !== 200) {
-      const msg = json?.message ? ` - ${json.message}` : ''
-      throw new Error(`目标端写入失败: code=${json.code}${msg}`)
+      const json = await openlistApiReadJson(putRes)
+      if (typeof json?.code === 'number' && json.code !== 200) {
+        const msg = json?.message ? ` - ${json.message}` : ''
+        throw new Error(`目标端写入失败: code=${json.code}${msg}`)
+      }
+    } finally {
+      clearTimeout(timer)
     }
-  } finally {
-    clearTimeout(timer)
-  }
+  })
 }
 
 /**

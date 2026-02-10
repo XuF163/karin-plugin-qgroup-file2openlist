@@ -19,6 +19,16 @@ export interface Config {
   /** OpenList 目标目录（WebDAV 路径，例：/QQ群文件） */
   openlistTargetDir: string
 
+  /** 资源限制（用于生产环境控制内存/带宽） */
+  resourceLimits?: {
+    /**
+     * 全局传输并发上限（所有“下载+上传/复制”共享）
+     * - <=0：不限制
+     * - 未配置：默认 1（完全串行，最省内存）
+     */
+    transferConcurrency?: number
+  }
+
   /** OpenList å¤‡ä»½ï¼šç›®æ ‡ OpenList åŸºç¡€åœ°å€ï¼ˆå¯¹ç«¯ï¼‰ */
   /** OpenList å¤‡ä»½ï¼šç›®æ ‡ OpenList ç”¨æˆ·åï¼ˆå¯¹ç«¯ï¼Œç”¨äºŽ WebDAV BasicAuthï¼‰ */
   /** OpenList å¤‡ä»½ï¼šç›®æ ‡ OpenList å¯†ç ï¼ˆå¯¹ç«¯ï¼Œç”¨äºŽ WebDAV BasicAuthï¼‰ */

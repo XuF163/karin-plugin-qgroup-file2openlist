@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { createThrottleTransform } from '@/model/shared/rateLimit'
 import { encodePathForUrl, normalizePosixPath } from '@/model/shared/path'
 import { fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
+import { withGlobalTransferLimit } from '@/model/shared/transferLimiter'
 
 export const isRetryableWebDavError = (error: unknown) => {
   const msg = formatErrorMessage(error)
@@ -176,66 +177,69 @@ export const copyWebDavToWebDav = async (params: {
   timeoutMs: number
 }) => {
   const { sourceDavBaseUrl, sourceAuth, sourcePath, targetDavBaseUrl, targetAuth, targetPath, timeoutMs } = params
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  try {
-    const sourceUrl = `${sourceDavBaseUrl}${encodePathForUrl(sourcePath)}`
-    const targetUrl = `${targetDavBaseUrl}${encodePathForUrl(targetPath)}`
+  await withGlobalTransferLimit(`copyWebDavToWebDav:${sourcePath}=>${targetPath}`, async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-    let downloadRes: Response
     try {
-      const downloadHeaders: Record<string, string> = {}
-      const authHeader = String(sourceAuth ?? '').trim()
-      if (authHeader) downloadHeaders.Authorization = authHeader
-      downloadRes = await fetch(sourceUrl, {
-        method: 'GET',
-        headers: downloadHeaders,
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('源端读取超时')
-      throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
+      const sourceUrl = `${sourceDavBaseUrl}${encodePathForUrl(sourcePath)}`
+      const targetUrl = `${targetDavBaseUrl}${encodePathForUrl(targetPath)}`
+
+      let downloadRes: Response
+      try {
+        const downloadHeaders: Record<string, string> = {}
+        const authHeader = String(sourceAuth ?? '').trim()
+        if (authHeader) downloadHeaders.Authorization = authHeader
+        downloadRes = await fetch(sourceUrl, {
+          method: 'GET',
+          headers: downloadHeaders,
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('源端读取超时')
+        throw new Error(`源端读取失败: ${formatErrorMessage(error)}`)
+      }
+
+      if (!downloadRes.ok) {
+        const body = await fetchTextSafely(downloadRes)
+        throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
+      }
+      if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
+
+      const headers: Record<string, string> = { Authorization: targetAuth }
+      const contentType = downloadRes.headers.get('content-type')
+      const contentLength = downloadRes.headers.get('content-length')
+      if (contentType) headers['Content-Type'] = contentType
+      if (contentLength) headers['Content-Length'] = contentLength
+
+      const sourceStream = Readable.fromWeb(downloadRes.body as any)
+
+      let putRes: Response
+      try {
+        putRes = await fetch(targetUrl, {
+          method: 'PUT',
+          headers,
+          body: sourceStream as any,
+          // @ts-expect-error Node fetch streaming body requires duplex
+          duplex: 'half',
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端 OpenList 连接/权限）')
+        throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
+      }
+
+      if (!putRes.ok) {
+        const body = await fetchTextSafely(putRes)
+        throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
+      }
+    } finally {
+      clearTimeout(timer)
     }
-
-    if (!downloadRes.ok) {
-      const body = await fetchTextSafely(downloadRes)
-      throw new Error(`源端读取失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
-    }
-    if (!downloadRes.body) throw new Error('源端读取失败: 响应体为空')
-
-    const headers: Record<string, string> = { Authorization: targetAuth }
-    const contentType = downloadRes.headers.get('content-type')
-    const contentLength = downloadRes.headers.get('content-length')
-    if (contentType) headers['Content-Type'] = contentType
-    if (contentLength) headers['Content-Length'] = contentLength
-
-    const sourceStream = Readable.fromWeb(downloadRes.body as any)
-
-    let putRes: Response
-    try {
-      putRes = await fetch(targetUrl, {
-        method: 'PUT',
-        headers,
-        body: sourceStream as any,
-        // @ts-expect-error Node fetch streaming body requires duplex
-        duplex: 'half',
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('目标端写入超时（请检查对端 OpenList 连接/权限）')
-      throw new Error(`目标端写入失败: ${formatErrorMessage(error)}`)
-    }
-
-    if (!putRes.ok) {
-      const body = await fetchTextSafely(putRes)
-      throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
-    }
-  } finally {
-    clearTimeout(timer)
-  }
+  })
 }
 
 export const createWebDavDirEnsurer = (davBaseUrl: string, auth: string, timeoutMs: number) => {
@@ -308,68 +312,72 @@ export const downloadAndUploadByWebDav = async (params: {
   rateLimitBytesPerSec?: number
 }) => {
   const { sourceUrl, sourceHeaders, targetUrl, auth, timeoutMs, rateLimitBytesPerSec } = params
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  try {
-    let downloadRes: Response
+
+  await withGlobalTransferLimit(`downloadAndUploadByWebDav:${targetUrl}`, async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+
     try {
-      downloadRes = await fetch(sourceUrl, {
-        headers: sourceHeaders,
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('下载超时')
-      throw new Error(`下载请求失败: ${formatErrorMessage(error)}`)
-    }
+      let downloadRes: Response
+      try {
+        downloadRes = await fetch(sourceUrl, {
+          headers: sourceHeaders,
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('下载超时')
+        throw new Error(`下载请求失败: ${formatErrorMessage(error)}`)
+      }
 
-    if (!downloadRes.ok) {
-      const body = await fetchTextSafely(downloadRes)
-      throw new Error(`下载失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
-    }
-    if (!downloadRes.body) throw new Error('下载失败: 响应体为空')
+      if (!downloadRes.ok) {
+        const body = await fetchTextSafely(downloadRes)
+        throw new Error(`下载失败: ${downloadRes.status} ${downloadRes.statusText}${body ? ` - ${body}` : ''}`)
+      }
+      if (!downloadRes.body) throw new Error('下载失败: 响应体为空')
 
-    const headers: Record<string, string> = {
-      Authorization: auth,
-    }
-    const contentType = downloadRes.headers.get('content-type')
-    const contentLength = downloadRes.headers.get('content-length')
-    if (contentType) headers['Content-Type'] = contentType
-    if (contentLength) headers['Content-Length'] = contentLength
+      const headers: Record<string, string> = {
+        Authorization: auth,
+      }
+      const contentType = downloadRes.headers.get('content-type')
+      const contentLength = downloadRes.headers.get('content-length')
+      if (contentType) headers['Content-Type'] = contentType
+      if (contentLength) headers['Content-Length'] = contentLength
 
-    let bodyStream: any = Readable.fromWeb(downloadRes.body as any)
-    const throttle = createThrottleTransform(rateLimitBytesPerSec || 0)
-    if (throttle) bodyStream = bodyStream.pipe(throttle)
+      let bodyStream: any = Readable.fromWeb(downloadRes.body as any)
+      const throttle = createThrottleTransform(rateLimitBytesPerSec || 0)
+      if (throttle) bodyStream = bodyStream.pipe(throttle)
 
-    let putRes: Response
-    try {
-      putRes = await fetch(targetUrl, {
-        method: 'PUT',
-        headers,
-        body: bodyStream as any,
-        // @ts-expect-error Node fetch streaming body requires duplex
-        duplex: 'half',
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-    } catch (error) {
-      if (isAbortError(error)) throw new Error('上传超时（请检查 OpenList 连接/权限）')
-      throw new Error(`上传请求失败: ${formatErrorMessage(error)}`)
-    }
+      let putRes: Response
+      try {
+        putRes = await fetch(targetUrl, {
+          method: 'PUT',
+          headers,
+          body: bodyStream as any,
+          // @ts-expect-error Node fetch streaming body requires duplex
+          duplex: 'half',
+          redirect: 'follow',
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (isAbortError(error)) throw new Error('上传超时（请检查 OpenList 连接/权限）')
+        throw new Error(`上传请求失败: ${formatErrorMessage(error)}`)
+      }
 
-    if (!putRes.ok) {
-      const body = await fetchTextSafely(putRes)
-      const hint = putRes.status === 401
-        ? '（账号/密码错误，或未开启 WebDAV）'
-        : putRes.status === 403
-          ? '（没有 WebDAV 管理/写入权限，或目标目录不可写/不在用户可访问范围）'
-          : ''
-      throw new Error(`上传失败: ${putRes.status} ${putRes.statusText}${hint}${body ? ` - ${body}` : ''}`)
+      if (!putRes.ok) {
+        const body = await fetchTextSafely(putRes)
+        const hint = putRes.status === 401
+          ? '（账号/密码错误，或未开启 WebDAV）'
+          : putRes.status === 403
+            ? '（没有 WebDAV 管理/写入权限，或目标目录不可写/不在用户可访问范围）'
+            : ''
+        throw new Error(`上传失败: ${putRes.status} ${putRes.statusText}${hint}${body ? ` - ${body}` : ''}`)
+      }
+    } finally {
+      clearTimeout(timer)
     }
-  } finally {
-    clearTimeout(timer)
-  }
+  })
 }
 
 /**
