@@ -452,48 +452,16 @@ export const backupOpenListToOpenListCore = async (params: {
 
     let scannedDirs = 0
     let scannedFiles = 0
+    let ok = 0
+    let skipped = 0
+    let fail = 0
     const startAt = Date.now()
 
-    ticker = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startAt) / 1000)
-      enqueueReport(`备份进行中（${elapsed}s）\n阶段：扫描\n已扫描目录：${scannedDirs}\n已发现文件：${scannedFiles}`)
-    }, 10_000)
+    const maxFilesLimit = typeof params.maxFiles === 'number' && Number.isFinite(params.maxFiles) && params.maxFiles > 0
+      ? Math.floor(params.maxFiles)
+      : undefined
 
     const sourceAuth = hasSourceAuth ? buildOpenListAuthHeader(sourceUsername, sourcePassword) : ''
-
-    const scanResult = await scanOpenListFiles({
-      sourceTransport,
-      sourceBaseUrl,
-      sourceToken: await getSourceToken(),
-      sourceAuth: sourceAuth || undefined,
-      sourceDavBaseUrl,
-      srcDir: normalizedSrcDir,
-      targetRoot,
-      timeoutMs: listTimeoutMs,
-      perPage: listPerPage,
-      scanConcurrency: scanConcurrencyMax,
-      onProgress: (p) => {
-        scannedDirs = p.scannedDirs
-        scannedFiles = p.files
-      },
-    })
-
-    const files = scanResult.files
-
-    if (typeof params.maxFiles === 'number' && Number.isFinite(params.maxFiles) && params.maxFiles > 0) {
-      files.splice(Math.floor(params.maxFiles))
-    }
-
-    if (!files.length) {
-      enqueueReport('未发现需要备份的文件。')
-      return { ok: 0, skipped: 0, fail: 0 }
-    }
-
-    if (ticker) clearInterval(ticker)
-    ticker = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startAt) / 1000)
-      enqueueReport(`备份进行中（${elapsed}s）\n阶段：复制\n待处理：${files.length}`)
-    }, 10_000)
 
     enqueueReport([
       '开始备份 OpenList...',
@@ -503,12 +471,10 @@ export const backupOpenListToOpenListCore = async (params: {
       `目标目录：${targetRoot}`,
       `模式：${mode}`,
       `传输：${transport}`,
-      `文件数：${files.length}`,
+      `扫描并发：${scanConcurrencyMax}`,
+      `复制并发：${maxConcurrency}`,
+      `maxFiles：${typeof maxFilesLimit === 'number' ? maxFilesLimit : '-'}`,
     ].join('\n'))
-
-    let skipped = 0
-    let ok = 0
-    let fail = 0
 
     const targetDavBase = targetDavBaseUrl
 
@@ -524,54 +490,123 @@ export const backupOpenListToOpenListCore = async (params: {
       })
     }
 
-    await runWithConcurrency(files, maxConcurrency, async ({ sourcePath, targetPath }) => {
-      try {
-        if (mode === 'incremental') {
-          const exists = await existsOnTarget({
+    const listDirEntries = async (dirPath: string) => {
+      if (sourceTransport === 'webdav') {
+        if (!sourceDavBaseUrl) throw new Error('源端 WebDAV 地址不正确')
+        return await webdavPropfindListEntries({
+          davBaseUrl: sourceDavBaseUrl,
+          auth: sourceAuth,
+          dirPath,
+          timeoutMs: listTimeoutMs,
+        })
+      }
+
+      return await openlistApiListEntries({
+        baseUrl: sourceBaseUrl,
+        token: await getSourceToken(),
+        dirPath,
+        timeoutMs: listTimeoutMs,
+        perPage: listPerPage,
+      })
+    }
+
+    const executing = new Set<Promise<void>>()
+    const launchCopy = (file: OpenListBackupFile) => {
+      const task = (async () => {
+        const { sourcePath, targetPath } = file
+        try {
+          if (mode === 'incremental') {
+            const exists = await existsOnTarget({
+              targetTransport,
+              targetDavBaseUrl: targetDavBase,
+              targetAuth,
+              targetBaseUrl,
+              getTargetToken,
+              targetPath,
+              timeoutMs: listTimeoutMs,
+            })
+            if (exists) {
+              skipped++
+              return
+            }
+          }
+
+          await ensureDirForPath(targetPath)
+
+          await copyOpenListFile({
+            sourceTransport,
             targetTransport,
+            sourceBaseUrl,
+            sourceDavBaseUrl,
+            sourceAuth,
+            targetBaseUrl,
             targetDavBaseUrl: targetDavBase,
             targetAuth,
-            targetBaseUrl,
-            getTargetToken,
+            sourcePath,
             targetPath,
-            timeoutMs: listTimeoutMs,
+            getSourceToken,
+            getTargetToken,
+            timeoutMs,
           })
-          if (exists) {
-            skipped++
-            return
+
+          ok++
+        } catch (error) {
+          fail++
+          logger.error(error)
+          if (allowAutoFallback) {
+            // 简单回退：若 WebDAV 失败则切 API；若 API 失败则切 WebDAV（下一轮生效）
+            const msg = formatErrorMessage(error)
+            if (targetTransport === 'webdav' && /401|403|MKCOL|PUT/i.test(msg)) targetTransport = 'api'
+            else if (targetTransport === 'api' && /fs\/put|fs\/mkdir|code=/i.test(msg)) targetTransport = 'webdav'
           }
         }
+      })()
 
-        await ensureDirForPath(targetPath)
+      executing.add(task)
+      task.finally(() => executing.delete(task))
+      return task
+    }
 
-        await copyOpenListFile({
-          sourceTransport,
-          targetTransport,
-          sourceBaseUrl,
-          sourceDavBaseUrl,
-          sourceAuth,
-          targetBaseUrl,
-          targetDavBaseUrl: targetDavBase,
-          targetAuth,
-          sourcePath,
-          targetPath,
-          getSourceToken,
-          getTargetToken,
-          timeoutMs,
-        })
+    ticker = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startAt) / 1000)
+      enqueueReport([
+        `备份进行中（${elapsed}s）`,
+        `已扫描目录：${scannedDirs}`,
+        `已发现文件：${scannedFiles}${typeof maxFilesLimit === 'number' ? `/${maxFilesLimit}` : ''}`,
+        `进度：ok=${ok} skip=${skipped} fail=${fail}`,
+        `并发：inFlight=${executing.size}/${maxConcurrency}`,
+      ].join('\n'))
+    }, 10_000)
 
-        ok++
-      } catch (error) {
-        fail++
-        logger.error(error)
-        if (allowAutoFallback) {
-          // 简单回退：若 WebDAV 失败则切 API；若 API 失败则切 WebDAV（下一轮生效）
-          const msg = formatErrorMessage(error)
-          if (targetTransport === 'webdav' && /401|403|MKCOL|PUT/i.test(msg)) targetTransport = 'api'
-          else if (targetTransport === 'api' && /fs\/put|fs\/mkdir|code=/i.test(msg)) targetTransport = 'webdav'
+    // 扫描目录树，同时按并发限制直接开始复制，避免把全量文件列表堆在内存里。
+    let pendingDirs: string[] = [normalizedSrcDir]
+    while (pendingDirs.length) {
+      const dirPath = pendingDirs.pop()!
+
+      scannedDirs++
+      const entries = await listDirEntries(dirPath)
+      for (const it of entries) {
+        const sourcePath = normalizePosixPath(path.posix.join(dirPath, it.name))
+        const targetPath = buildTargetPath(targetRoot, sourcePath)
+        if (it.isDir) {
+          pendingDirs.push(sourcePath)
+          continue
+        }
+
+        scannedFiles++
+        if (typeof maxFilesLimit === 'number' && scannedFiles > maxFilesLimit) {
+          pendingDirs = []
+          break
+        }
+
+        launchCopy({ sourcePath, targetPath })
+        if (executing.size >= maxConcurrency) {
+          await Promise.race(executing)
         }
       }
-    })
+    }
+
+    await Promise.all(executing)
 
     enqueueReport(`备份完成：成功 ${ok}，跳过 ${skipped}，失败 ${fail}`)
     return { ok, skipped, fail }

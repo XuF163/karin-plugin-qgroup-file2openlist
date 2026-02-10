@@ -1,9 +1,12 @@
+import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createThrottleTransform } from '@/model/shared/rateLimit'
 import { encodePathForUrl, normalizePosixPath } from '@/model/shared/path'
 import { fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
 import { withGlobalTransferLimit } from '@/model/shared/transferLimiter'
+import { createTransferTempFilePath, parseContentLengthHeader, safeUnlink, shouldSpoolToDisk, streamToFile } from '@/model/shared/transferSpool'
+import { logger } from 'node-karin'
 
 export const isRetryableWebDavError = (error: unknown) => {
   const msg = formatErrorMessage(error)
@@ -181,6 +184,7 @@ export const copyWebDavToWebDav = async (params: {
   await withGlobalTransferLimit(`copyWebDavToWebDav:${sourcePath}=>${targetPath}`, async () => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let tmpFilePath: string | undefined
 
     try {
       const sourceUrl = `${sourceDavBaseUrl}${encodePathForUrl(sourcePath)}`
@@ -210,18 +214,30 @@ export const copyWebDavToWebDav = async (params: {
 
       const headers: Record<string, string> = { Authorization: targetAuth }
       const contentType = downloadRes.headers.get('content-type')
-      const contentLength = downloadRes.headers.get('content-length')
+      const contentLength = parseContentLengthHeader(downloadRes.headers.get('content-length'))
       if (contentType) headers['Content-Type'] = contentType
-      if (contentLength) headers['Content-Length'] = contentLength
+      if (contentLength) headers['Content-Length'] = String(contentLength)
 
-      const sourceStream = Readable.fromWeb(downloadRes.body as any)
+      const spoolToDisk = shouldSpoolToDisk(contentLength)
 
       let putRes: Response
       try {
+        let body: any
+        if (spoolToDisk) {
+          tmpFilePath = createTransferTempFilePath('webdav-copy')
+          logger.info(`[传输][落盘] WebDAV复制检测到大文件，将先下载落盘再上传: ${sourcePath} -> ${targetPath}`)
+          await streamToFile(Readable.fromWeb(downloadRes.body as any), tmpFilePath, { signal: controller.signal })
+          const stat = await fs.promises.stat(tmpFilePath)
+          headers['Content-Length'] = String(stat.size)
+          body = fs.createReadStream(tmpFilePath) as any
+        } else {
+          body = Readable.fromWeb(downloadRes.body as any)
+        }
+
         putRes = await fetch(targetUrl, {
           method: 'PUT',
           headers,
-          body: sourceStream as any,
+          body,
           // @ts-expect-error Node fetch streaming body requires duplex
           duplex: 'half',
           redirect: 'follow',
@@ -236,8 +252,14 @@ export const copyWebDavToWebDav = async (params: {
         const body = await fetchTextSafely(putRes)
         throw new Error(`目标端写入失败: ${putRes.status} ${putRes.statusText}${body ? ` - ${body}` : ''}`)
       }
+    } catch (error) {
+      try {
+        controller.abort()
+      } catch {}
+      throw error
     } finally {
       clearTimeout(timer)
+      if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })
 }
@@ -310,13 +332,14 @@ export const downloadAndUploadByWebDav = async (params: {
   auth: string
   timeoutMs: number
   rateLimitBytesPerSec?: number
+  /** 已知文件大小（可选；用于提前判断是否落盘） */
+  expectedSize?: number
 }) => {
-  const { sourceUrl, sourceHeaders, targetUrl, auth, timeoutMs, rateLimitBytesPerSec } = params
-
-
+  const { sourceUrl, sourceHeaders, targetUrl, auth, timeoutMs, rateLimitBytesPerSec, expectedSize } = params
   await withGlobalTransferLimit(`downloadAndUploadByWebDav:${targetUrl}`, async () => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let tmpFilePath: string | undefined
 
     try {
       let downloadRes: Response
@@ -341,16 +364,33 @@ export const downloadAndUploadByWebDav = async (params: {
         Authorization: auth,
       }
       const contentType = downloadRes.headers.get('content-type')
-      const contentLength = downloadRes.headers.get('content-length')
+      const contentLength = parseContentLengthHeader(downloadRes.headers.get('content-length'))
       if (contentType) headers['Content-Type'] = contentType
-      if (contentLength) headers['Content-Length'] = contentLength
+      if (contentLength) headers['Content-Length'] = String(contentLength)
 
-      let bodyStream: any = Readable.fromWeb(downloadRes.body as any)
-      const throttle = createThrottleTransform(rateLimitBytesPerSec || 0)
-      if (throttle) bodyStream = bodyStream.pipe(throttle)
+      const sizeForDecision = (typeof expectedSize === 'number' && Number.isFinite(expectedSize) && expectedSize > 0)
+        ? Math.floor(expectedSize)
+        : contentLength
+      const spoolToDisk = shouldSpoolToDisk(sizeForDecision)
 
       let putRes: Response
       try {
+        let bodyStream: any
+        if (spoolToDisk) {
+          tmpFilePath = createTransferTempFilePath('webdav-download-upload')
+          logger.info(`[传输][落盘] 检测到大文件，将先下载落盘再上传: ${targetUrl}`)
+          await streamToFile(Readable.fromWeb(downloadRes.body as any), tmpFilePath, { signal: controller.signal })
+          const stat = await fs.promises.stat(tmpFilePath)
+          headers['Content-Length'] = String(stat.size)
+
+          bodyStream = fs.createReadStream(tmpFilePath) as any
+        } else {
+          bodyStream = Readable.fromWeb(downloadRes.body as any)
+        }
+
+        const throttle = createThrottleTransform(rateLimitBytesPerSec || 0)
+        if (throttle) bodyStream = bodyStream.pipe(throttle)
+
         putRes = await fetch(targetUrl, {
           method: 'PUT',
           headers,
@@ -371,11 +411,17 @@ export const downloadAndUploadByWebDav = async (params: {
           ? '（账号/密码错误，或未开启 WebDAV）'
           : putRes.status === 403
             ? '（没有 WebDAV 管理/写入权限，或目标目录不可写/不在用户可访问范围）'
-            : ''
+          : ''
         throw new Error(`上传失败: ${putRes.status} ${putRes.statusText}${hint}${body ? ` - ${body}` : ''}`)
       }
+    } catch (error) {
+      try {
+        controller.abort()
+      } catch {}
+      throw error
     } finally {
       clearTimeout(timer)
+      if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })
 }

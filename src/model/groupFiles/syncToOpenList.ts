@@ -216,13 +216,14 @@ export const syncGroupFilesToOpenListCore = async (params: {
       return /403|URL已过期|url已过期|url可能已失效|需要重新获取|下载超时/.test(message)
     }
 
-    const transferOne = async (sourceUrl: string, targetUrl: string) => {
+    const transferOne = async (sourceUrl: string, targetUrl: string, expectedSize?: number) => {
       await downloadAndUploadByWebDav({
         sourceUrl,
         targetUrl,
         auth,
         timeoutMs: transferTimeoutMs,
         rateLimitBytesPerSec: effectiveRateLimitBytesPerSec || undefined,
+        expectedSize,
       })
     }
 
@@ -248,7 +249,7 @@ export const syncGroupFilesToOpenListCore = async (params: {
           const currentUrl = item.url as string
           if (!currentUrl) throw new Error('缺少下载 URL')
 
-          await transferOne(currentUrl, targetUrl)
+          await transferOne(currentUrl, targetUrl, item.size)
 
           okCount++
           succeeded = true
@@ -326,4 +327,3 @@ export const syncGroupFilesToOpenListCore = async (params: {
     return { total: limitedList.length, skipped, urlOk: withUrl.length, ok: okCount, fail: failCount }
   })
 }
-

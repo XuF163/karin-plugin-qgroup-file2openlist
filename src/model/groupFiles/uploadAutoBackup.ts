@@ -285,6 +285,7 @@ export const handleGroupFileUploadedAutoBackup = (e: any) => {
                 auth,
                 timeoutMs: transferTimeoutMs,
                 rateLimitBytesPerSec: effectiveRateLimitBytesPerSec || undefined,
+                expectedSize: size,
               })
               break
             } catch (error) {
@@ -331,4 +332,3 @@ export const handleGroupFileUploadedAutoBackup = (e: any) => {
     logger.error(error)
   }
 }
-

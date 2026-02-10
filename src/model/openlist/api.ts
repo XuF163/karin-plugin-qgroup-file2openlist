@@ -1,9 +1,12 @@
+import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { buildOpenListApiBaseUrl } from './url'
 import { normalizePosixPath } from '@/model/shared/path'
 import { fetchTextSafely, formatErrorMessage, isAbortError } from '@/model/shared/errors'
 import { withGlobalTransferLimit } from '@/model/shared/transferLimiter'
+import { createTransferTempFilePath, parseContentLengthHeader, safeUnlink, shouldSpoolToDisk, streamToFile } from '@/model/shared/transferSpool'
+import { logger } from 'node-karin'
 
 export type OpenListApiResponse<T = unknown> = {
   code?: number
@@ -270,8 +273,10 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
   targetToken?: string
   targetPath: string
   timeoutMs: number
+  /** 已知文件大小（可选；用于提前判断是否落盘） */
+  expectedSize?: number
 }) => {
-  const { sourceUrl, sourceHeaders, targetBaseUrl, targetToken, targetPath, timeoutMs } = params
+  const { sourceUrl, sourceHeaders, targetBaseUrl, targetToken, targetPath, timeoutMs, expectedSize } = params
 
   const apiBaseUrl = buildOpenListApiBaseUrl(targetBaseUrl)
   if (!apiBaseUrl) throw new Error('目标 OpenList API 地址不正确，请检查目标 OpenList 地址')
@@ -279,6 +284,7 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
   await withGlobalTransferLimit(`downloadAndUploadByOpenListApiPut:${targetPath}`, async () => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let tmpFilePath: string | undefined
 
     try {
       let downloadRes: Response
@@ -305,18 +311,33 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
       const authToken = String(targetToken ?? '').trim()
       if (authToken) headers.Authorization = authToken
       const contentType = downloadRes.headers.get('content-type')
-      const contentLength = downloadRes.headers.get('content-length')
+      const contentLength = parseContentLengthHeader(downloadRes.headers.get('content-length'))
       if (contentType) headers['Content-Type'] = contentType
-      if (contentLength) headers['Content-Length'] = contentLength
+      if (contentLength) headers['Content-Length'] = String(contentLength)
 
-      const sourceStream = Readable.fromWeb(downloadRes.body as any)
+      const sizeForDecision = (typeof expectedSize === 'number' && Number.isFinite(expectedSize) && expectedSize > 0)
+        ? Math.floor(expectedSize)
+        : contentLength
+      const spoolToDisk = shouldSpoolToDisk(sizeForDecision)
 
       let putRes: Response
       try {
+        let body: any
+        if (spoolToDisk) {
+          tmpFilePath = createTransferTempFilePath('openlist-api-put')
+          logger.info(`[传输][落盘] 检测到大文件，将先下载落盘再上传(API): ${targetPath}`)
+          await streamToFile(Readable.fromWeb(downloadRes.body as any), tmpFilePath, { signal: controller.signal })
+          const stat = await fs.promises.stat(tmpFilePath)
+          headers['Content-Length'] = String(stat.size)
+          body = fs.createReadStream(tmpFilePath) as any
+        } else {
+          body = Readable.fromWeb(downloadRes.body as any)
+        }
+
         putRes = await fetch(`${apiBaseUrl}/fs/put`, {
           method: 'PUT',
           headers,
-          body: sourceStream as any,
+          body,
           // @ts-expect-error Node fetch streaming body requires duplex
           duplex: 'half',
           redirect: 'follow',
@@ -337,8 +358,14 @@ export const downloadAndUploadByOpenListApiPut = async (params: {
         const msg = json?.message ? ` - ${json.message}` : ''
         throw new Error(`目标端写入失败: code=${json.code}${msg}`)
       }
+    } catch (error) {
+      try {
+        controller.abort()
+      } catch {}
+      throw error
     } finally {
       clearTimeout(timer)
+      if (tmpFilePath) await safeUnlink(tmpFilePath)
     }
   })
 }

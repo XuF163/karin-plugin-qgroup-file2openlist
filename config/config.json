@@ -5,7 +5,8 @@
   "openlistPassword": "",
   "openlistTargetDir": "/",
   "resourceLimits": {
-    "transferConcurrency": 1
+    "transferConcurrency": 1,
+    "largeFileSpoolThresholdMB": 200
   },
   "groupSyncDefaults": {
     "mode": "incremental",

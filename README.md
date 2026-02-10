@@ -51,6 +51,7 @@ TypeScript 插件开发流程现在更加简单，无需手动克隆模板仓库
 - `openlistUsername` / `openlistPassword`：用于 WebDAV BasicAuth 登录
 - `openlistTargetDir`：目标目录（例：`/挂载目录/QQ群文件`）
 - `resourceLimits.transferConcurrency`：全局传输并发上限（所有下载+上传共享；生产环境建议 1，避免同时传输吃满内存；<=0 不限制）
+- `resourceLimits.largeFileSpoolThresholdMB`：大文件落盘阈值（MB，默认 200；<=0 禁用；大文件会先下载到本地临时文件再上传，降低内存/缓冲压力）
 - `groupSyncDefaults`：群同步默认策略（并发、单文件超时、重试等）
 - `groupSyncTargets`：同步对象群配置（每群可单独覆盖目录/并发/同步时段等）
 

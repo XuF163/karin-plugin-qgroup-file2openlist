@@ -27,6 +27,13 @@ export interface Config {
      * - 未配置：默认 1（完全串行，最省内存）
      */
     transferConcurrency?: number
+    /**
+     * 大文件落盘阈值（MB）。
+     * - 当文件大小 >= 阈值时：先下载到本地临时文件，再上传到 OpenList（降低内存/缓冲压力）
+     * - <=0：禁用落盘（始终流式转发）
+     * - 未配置：默认 200
+     */
+    largeFileSpoolThresholdMB?: number
   }
 
   /** OpenList å¤‡ä»½ï¼šç›®æ ‡ OpenList åŸºç¡€åœ°å€ï¼ˆå¯¹ç«¯ï¼‰ */
