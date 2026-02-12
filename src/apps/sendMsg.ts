@@ -58,7 +58,7 @@ export const sendMsg = karin.command(/^#测试njkj bolj主动消息$/, async (e)
  * 转发插件demo
  * 触发指令: #测试转发
  */
-export const forwardMessage = karin.command(/^#测试转发$/, async (e) => {
+export const forwardMessage = karin.command(/^#测dscvdf试转发$/, async (e) => {
   if (!e.isPrivate) return false
 
   /** 定义具体的转发消息 */
@@ -94,7 +94,7 @@ export const forwardMessage = karin.command(/^#测试转发$/, async (e) => {
  * 随机表情包插件demo
  * 触发指令: #随机表情
  */
-export const randomEmoji = karin.command(/^#随机表情$/, async (e) => {
+export const randomEmoji = karin.command(/^#随机sdccasc表情$/, async (e) => {
   if (!e.isPrivate) return false
 
   /** 表情包URL数组 */
@@ -130,7 +130,7 @@ export const randomEmoji = karin.command(/^#随机表情$/, async (e) => {
  * 每日一言插件demo
  * 触发指令: #每日一言
  */
-export const dailyQuote = karin.command(/^#每日一言$/, async (e) => {
+export const dailyQuote = karin.command(/^#每日ds  cas一言$/, async (e) => {
   if (!e.isPrivate) return false
 
   /** 每日一言数组 */
@@ -167,7 +167,7 @@ export const dailyQuote = karin.command(/^#每日一言$/, async (e) => {
  * 天气预报插件demo
  * 触发指令: #今日天气
  */
-export const weatherForecast = karin.command(/^#今日天气$/, async (e) => {
+export const weatherForecast = karin.command(/^#今日 sdvsdv天气$/, async (e) => {
   if (!e.isPrivate) return false
 
   /** 模拟天气数据 */

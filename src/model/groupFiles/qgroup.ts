@@ -89,7 +89,24 @@ export const getGroupFileListCompat = async (bot: any, groupId: string, folderId
   throw new Error('当前适配器不支持获取群文件列表（getGroupFileList / getGroupRootFiles / getGroupFilesByFolder 均不可用）')
 }
 
-export const resolveGroupFileUrl = async (bot: any, contact: any, groupId: string, file: ExportedGroupFile) => {
+type ResolveGroupFileUrlOptions = {
+  retries?: number
+  delayMs?: number
+  maxDelayMs?: number
+}
+
+const isRetryableResolveGroupFileUrlError = (error: unknown) => {
+  const msg = formatErrorMessage(error)
+
+  // 明确不会通过重试解决的问题
+  if (/缺少 fileId|群号无法转换为 number|未找到可用接口/.test(msg)) return false
+  if (/不存在|not found|file not found/i.test(msg)) return false
+
+  // 常见的临时性/限流类错误（NapCat/OneBot/网络抖动）
+  return /请求错误|sendApi|限流|频繁|风控|rate|limit|429|Too Many Requests|getFileUrl|nc_getFile|getGroupFileUrl|超时|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|UND_ERR|socket hang up/i.test(msg)
+}
+
+const resolveGroupFileUrlOnce = async (bot: any, contact: any, groupId: string, file: ExportedGroupFile) => {
   if (!file.fileId) throw new Error('缺少 fileId')
 
   const reasons: string[] = []
@@ -153,6 +170,37 @@ export const resolveGroupFileUrl = async (bot: any, contact: any, groupId: strin
   }
 
   throw new Error(reasons[0] ?? '无法获取下载 URL（未找到可用接口）')
+}
+
+export const resolveGroupFileUrl = async (
+  bot: any,
+  contact: any,
+  groupId: string,
+  file: ExportedGroupFile,
+  options?: ResolveGroupFileUrlOptions,
+) => {
+  const retries = Math.max(0, Math.floor(options?.retries ?? 2))
+  const delayMs = Math.max(0, Math.floor(options?.delayMs ?? 1200))
+  const maxDelayMs = Math.max(delayMs, Math.floor(options?.maxDelayMs ?? 15_000))
+
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await resolveGroupFileUrlOnce(bot, contact, groupId, file)
+    } catch (error) {
+      lastError = error
+      if (attempt >= retries) break
+      if (!isRetryableResolveGroupFileUrlError(error)) break
+
+      const backoff = delayMs * Math.pow(2, attempt)
+      const capped = Math.min(maxDelayMs, backoff)
+      const jittered = Math.floor(capped * (0.8 + Math.random() * 0.4))
+      if (jittered > 0) await sleep(jittered)
+    }
+  }
+
+  if (lastError) throw lastError
+  throw new Error('无法获取下载 URL')
 }
 
 export const collectAllGroupFiles = async (bot: any, groupId: string, startFolderId?: string) => {

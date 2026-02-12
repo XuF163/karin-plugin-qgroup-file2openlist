@@ -21,6 +21,38 @@ const MIN_FILE_TIMEOUT_SEC = 10
 const DEFAULT_PROGRESS_REPORT_EVERY = 10
 const MAX_TRANSFER_CONCURRENCY = 5
 
+const createAsyncLimiter = (concurrency: number) => {
+  const limit = Math.max(1, Math.floor(concurrency) || 1)
+  let active = 0
+  const queue: Array<() => void> = []
+
+  const acquire = async () => {
+    if (active < limit) {
+      active++
+      return
+    }
+    await new Promise<void>((resolve) => queue.push(resolve))
+  }
+
+  const release = () => {
+    const next = queue.shift()
+    if (next) {
+      next()
+      return
+    }
+    active = Math.max(0, active - 1)
+  }
+
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    await acquire()
+    try {
+      return await fn()
+    } finally {
+      release()
+    }
+  }
+}
+
 const buildRemotePathForItem = (item: ExportedGroupFile, targetDir: string, flat: boolean) => {
   const relativeParts = (flat ? [item.name] : item.path.split('/')).filter(Boolean).map(safePathSegment)
   return normalizePosixPath(path.posix.join(targetDir, ...relativeParts))
@@ -187,28 +219,43 @@ export const syncGroupFilesToOpenListCore = async (params: {
       return { total: limitedList.length, skipped, urlOk: 0, ok: 0, fail: 0 }
     }
 
+    report && await report('将按需解析下载 URL（避免批量预取导致 URL 过期/触发限流）')
+
     const urlErrors: ExportError[] = []
-    await runWithConcurrency(needSync, Math.max(1, Math.floor(urlConcurrency) || 1), async ({ item }) => {
-      try {
-        item.url = await resolveGroupFileUrl(bot, groupContact, groupId, item)
-      } catch (error: any) {
-        urlErrors.push({ fileId: item.fileId, path: item.path, message: formatErrorMessage(error) })
-      }
-    })
-
-    const withUrl = needSync.filter(({ item }) => typeof item.url === 'string' && item.url).map(v => v)
-    report && await report(`URL获取完成：成功 ${withUrl.length} / 失败 ${needSync.length - withUrl.length}（增量跳过 ${skipped}）`)
-
-    if (!withUrl.length) {
-      report && await report('没有可用的下载 URL，无法同步到 OpenList')
-      return { total: limitedList.length, skipped, urlOk: 0, ok: 0, fail: 0 }
-    }
-
     const syncErrors: Array<{ path: string, fileId: string, message: string }> = []
+    const urlOkSet = new Set<string>()
     let okCount = 0
 
     const shouldRefreshUrl = (message: string) => {
-      return /403|URL已过期|url已过期|url可能已失效|需要重新获取|下载超时/.test(message)
+      return /401|403|404|URL已过期|url已过期|url可能已失效|需要重新获取|下载超时/.test(message)
+    }
+
+    const resolveUrlWithLimit = createAsyncLimiter(Math.max(1, Math.floor(urlConcurrency) || 1))
+    const urlResolveOptions = {
+      retries: 2,
+      delayMs: retryDelayMs > 0 ? Math.floor(retryDelayMs) : undefined,
+      maxDelayMs: 20_000,
+    }
+
+    const ensureItemUrl = async (item: ExportedGroupFile, remotePath: string) => {
+      const existing = typeof item.url === 'string' ? item.url.trim() : ''
+      if (existing) {
+        urlOkSet.add(remotePath)
+        return existing
+      }
+
+      try {
+        const url = await resolveUrlWithLimit(() =>
+          resolveGroupFileUrl(bot, groupContact, groupId, item, urlResolveOptions),
+        )
+        const cleaned = typeof url === 'string' ? url.trim() : ''
+        if (!cleaned) throw new Error('返回空 URL')
+        item.url = cleaned
+        urlOkSet.add(remotePath)
+        return cleaned
+      } catch (error) {
+        throw new Error(`URL获取失败: ${formatErrorMessage(error)}`)
+      }
     }
 
     const transferOne = async (sourceUrl: string, targetUrl: string, expectedSize?: number) => {
@@ -227,8 +274,8 @@ export const syncGroupFilesToOpenListCore = async (params: {
     const transferInitial = Math.min(MAX_TRANSFER_CONCURRENCY, Math.max(1, Math.floor(transferConcurrency) || 1))
     const adaptiveTransfer = effectiveRateLimitBytesPerSec <= 0
 
-    const transferFn = async ({ item, remotePath }: typeof withUrl[number], index: number) => {
-      logger.info(`[群文件同步][${groupId}] 同步中(${index + 1}/${withUrl.length}): ${item.path}`)
+    const transferFn = async ({ item, remotePath }: typeof needSync[number], index: number) => {
+      logger.info(`[群文件同步][${groupId}] 同步中(${index + 1}/${needSync.length}): ${item.path}`)
 
       const remoteDir = normalizePosixPath(path.posix.dirname(remotePath))
       const targetUrl = `${davBaseUrl}${encodePathForUrl(remotePath)}`
@@ -241,8 +288,7 @@ export const syncGroupFilesToOpenListCore = async (params: {
         try {
           await dirEnsurer.ensureDir(remoteDir)
 
-          const currentUrl = item.url as string
-          if (!currentUrl) throw new Error('缺少下载 URL')
+          const currentUrl = await ensureItemUrl(item, remotePath)
 
           await transferOne(currentUrl, targetUrl, item.size)
 
@@ -264,9 +310,7 @@ export const syncGroupFilesToOpenListCore = async (params: {
 
           if (attempt < attempts) {
             if (shouldRefreshUrl(msg)) {
-              try {
-                item.url = await resolveGroupFileUrl(bot, groupContact, groupId, item)
-              } catch {}
+              item.url = undefined
             }
 
             const delay = Math.max(0, Math.floor(retryDelayMs) || 0) * Math.pow(2, attempt - 1)
@@ -277,21 +321,26 @@ export const syncGroupFilesToOpenListCore = async (params: {
       }
 
       if (!succeeded && lastError) {
-        syncErrors.push({
-          path: item.path,
-          fileId: item.fileId,
-          message: formatErrorMessage(lastError),
-        })
+        const message = formatErrorMessage(lastError)
+        if (message.startsWith('URL获取失败:')) {
+          urlErrors.push({ fileId: item.fileId, path: item.path, message })
+        } else {
+          syncErrors.push({
+            path: item.path,
+            fileId: item.fileId,
+            message,
+          })
+        }
       }
 
       if (safeProgressReportEvery > 0 && (index + 1) % safeProgressReportEvery === 0) {
-        report && await report(`同步进度：${index + 1}/${withUrl.length}（成功 ${okCount}）`)
+        report && await report(`同步进度：${index + 1}/${needSync.length}（成功 ${okCount}）`)
       }
     }
 
     if (adaptiveTransfer) {
       logger.info(`[群文件同步][${groupId}] 未配置限速，将自适应调整传输并发（最多 ${MAX_TRANSFER_CONCURRENCY}）`)
-      await runWithAdaptiveConcurrency(withUrl, {
+      await runWithAdaptiveConcurrency(needSync, {
         initial: transferInitial,
         max: MAX_TRANSFER_CONCURRENCY,
         fn: transferFn,
@@ -300,16 +349,16 @@ export const syncGroupFilesToOpenListCore = async (params: {
         },
       })
     } else {
-      await runWithConcurrency(withUrl, transferInitial, transferFn)
+      await runWithConcurrency(needSync, transferInitial, transferFn)
     }
 
     state.lastSyncAt = Date.now()
     writeGroupSyncState(groupId, state)
 
-    const failCount = withUrl.length - okCount
+    const failCount = needSync.length - okCount
     report && await report(`同步完成：成功 ${okCount} / 失败 ${failCount}（增量跳过 ${skipped}）`)
 
-    if (failCount) {
+    if (syncErrors.length) {
       const preview = syncErrors.slice(0, 5).map((it) => `${it.path} (${it.fileId})\n${it.message}`).join('\n\n')
       report && await report(`失败示例（前5条）：\n${preview}`)
     }
@@ -319,6 +368,6 @@ export const syncGroupFilesToOpenListCore = async (params: {
       report && await report(`URL获取失败示例（前5条）：\n${preview}`)
     }
 
-    return { total: limitedList.length, skipped, urlOk: withUrl.length, ok: okCount, fail: failCount }
+    return { total: limitedList.length, skipped, urlOk: urlOkSet.size, ok: okCount, fail: failCount }
   })
 }
