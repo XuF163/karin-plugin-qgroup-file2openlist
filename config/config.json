@@ -13,7 +13,7 @@
     "flat": false,
     "urlConcurrency": 3,
     "transferConcurrency": 3,
-    "fileTimeoutSec": 3000,
+    "fileTimeoutSec": 30000,
     "retryTimes": 2,
     "retryDelayMs": 1500,
     "progressReportEvery": 10,
